@@ -2,7 +2,6 @@
 API smoke tests — verify the FastAPI endpoints work end-to-end.
 These run as a separate CI job after the unit test suite passes.
 """
-import pytest
 from fastapi.testclient import TestClient
 
 from freedom_theory.api.app import app
