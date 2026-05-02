@@ -261,17 +261,25 @@ Any `Action` with any of the following flags set to `True` is unconditionally bl
 
 ## Rust Backend
 
-The `freedom-kernel/` directory contains a Rust implementation of all kernel types compiled as a Python extension module via [PyO3](https://pyo3.rs/) and [maturin](https://github.com/PyO3/maturin).
+The `freedom-kernel/` directory is a Rust crate compiled as a Python extension module via [PyO3](https://pyo3.rs/) + [maturin](https://github.com/PyO3/maturin). It is also a language-agnostic shared library with a C ABI.
 
 ```
 freedom-kernel/
   Cargo.toml
+  include/
+    freedom_kernel.h   — C header for FFI callers (Go, Zig, Java, Node, …)
   src/
-    lib.rs        — PyModule entry: registers all classes
-    entities.rs   — AgentType, ResourceType, Resource, Entity, RightsClaim
-    registry.rs   — OwnershipRegistry, ConflictRecord
-    verifier.rs   — Action, VerificationResult, FreedomVerifier
+    engine.rs          — pure Rust verification logic (no PyO3, no I/O, auditable)
+    wire.rs            — serde JSON wire types (ActionWire, VerificationResultWire, …)
+    crypto.rs          — process-scoped ed25519 signing key (OnceLock + OsRng)
+    ffi.rs             — C ABI: freedom_kernel_verify / freedom_kernel_pubkey
+    entities.rs        — AgentType, ResourceType, Resource, Entity, RightsClaim (PyO3)
+    registry.rs        — OwnershipRegistry, ConflictRecord (PyO3)
+    verifier.rs        — Action, VerificationResult, FreedomVerifier (thin PyO3 facade)
+    lib.rs             — PyModule entry + verify_json / kernel_pubkey Python functions
 ```
+
+`engine.rs` is the formal core — zero PyO3, zero I/O, pure data-in/data-out. The PyO3 layer and the C layer are both thin facades over it. The same verification logic runs regardless of which language calls the kernel.
 
 At import time, `freedom_theory.kernel` attempts `from freedom_kernel import ...`. If the compiled `.pyd`/`.so` is present, the Rust classes are used. If not, the library falls back silently to the pure Python implementation in `freedom_theory.kernel._pure`. No code change or configuration is needed in either case.
 
@@ -279,6 +287,64 @@ At import time, `freedom_theory.kernel` attempts `from freedom_kernel import ...
 from freedom_theory.kernel import _BACKEND
 print(_BACKEND)  # "rust" or "python"
 ```
+
+---
+
+## Cryptographic Attestation
+
+Every `VerificationResult` can carry an **ed25519 signature** over its canonical JSON. This means any party that holds the kernel's public key can verify that a decision is authentic — the calling agent cannot forge a `PERMITTED` result.
+
+```python
+from freedom_theory import FreedomVerifier, kernel_pubkey
+
+verifier = FreedomVerifier(registry)
+
+# Standard verify — no signature
+result = verifier.verify(action)
+print(result.signature)    # None
+
+# Signed verify — result is cryptographically attested
+result = verifier.verify_signed(action)
+print(result.signature)    # "a3f8...c1" (hex ed25519 signature)
+print(result.signing_key)  # "d7e2...99" (hex verifying key)
+
+# Publish the kernel's verifying key so auditors can check results
+print(kernel_pubkey())     # "d7e2...99"
+```
+
+The signature is over the canonical JSON of the result (with `signature` and `signing_key` fields excluded), so it can be verified out-of-band by any ed25519 implementation.
+
+---
+
+## Language-Agnostic C Interface
+
+The compiled `.so`/`.dll` exports a C ABI declared in `freedom-kernel/include/freedom_kernel.h`. Any language that can call a shared library can use Freedom Kernel with no Python runtime.
+
+```c
+#include "freedom_kernel.h"
+
+char result[4096];
+const char *input =
+    "{\"registry\":{\"claims\":[{\"holder\":{\"name\":\"alice\",\"kind\":\"HUMAN\"},"
+    "\"resource\":{\"name\":\"db\",\"rtype\":\"database_table\"},"
+    "\"can_read\":true,\"can_write\":true,\"confidence\":1.0}],"
+    "\"machine_owners\":[{\"machine\":{\"name\":\"bot\",\"kind\":\"MACHINE\"},"
+    "\"owner\":{\"name\":\"alice\",\"kind\":\"HUMAN\"}}]},"
+    "\"action\":{\"action_id\":\"op-1\",\"actor\":{\"name\":\"bot\",\"kind\":\"MACHINE\"},"
+    "\"resources_write\":[{\"name\":\"db\",\"rtype\":\"database_table\"}]}}";
+
+freedom_kernel_verify(input, result, sizeof(result));
+// result → {"action_id":"op-1","permitted":true,...,"signature":"a3f8...","signing_key":"d7e2..."}
+```
+
+From Python, the same JSON interface is available directly:
+
+```python
+from freedom_theory import verify_json
+result_json = verify_json('{"registry": {...}, "action": {...}}')
+```
+
+Callers: C, Go, Zig, Java (JNA), Rust (via cdylib), Node.js (ffi-napi), Python (ctypes).
 
 ---
 
