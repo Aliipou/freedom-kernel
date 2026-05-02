@@ -168,3 +168,36 @@ class FreedomVerifier:
             requires_human_arbitration=requires_arbitration,
             manipulation_score=0.0,
         )
+
+    def verify_plan(self, actions: list[Action]) -> list[VerificationResult]:
+        """
+        Verify a sequence of actions as a plan (Stage 2).
+
+        Each action is verified in order. If a hard sovereignty flag fires,
+        the remaining actions are cancelled rather than evaluated — the plan
+        itself reveals intent to subvert the system.
+
+        Returns one VerificationResult per action.
+        """
+        results: list[VerificationResult] = []
+        for i, action in enumerate(actions):
+            result = self.verify(action)
+            results.append(result)
+            if any("FORBIDDEN" in v for v in result.violations):
+                cancelled = [
+                    VerificationResult(
+                        action_id=a.action_id,
+                        permitted=False,
+                        violations=(
+                            f"Plan aborted: action '{action.action_id}' triggered "
+                            "a sovereignty violation. Remaining plan cancelled.",
+                        ),
+                        warnings=(),
+                        confidence=0.0,
+                        requires_human_arbitration=True,
+                        manipulation_score=0.0,
+                    )
+                    for a in actions[i + 1 :]
+                ]
+                return results + cancelled
+        return results

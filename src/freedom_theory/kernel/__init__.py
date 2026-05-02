@@ -1,15 +1,13 @@
 """
-Freedom Theory Kernel — minimal formal AGI governance gate.
+Freedom Kernel — capability-security gate for agentic AI.
 
-LLM → ActionIR → FreedomVerifier → Execute
+LLM → Action IR → FreedomVerifier → Execute | Block
 
-This package contains only what is necessary for the permission gate:
-  entities    — typed data (Entity, Resource, RightsClaim)
-  registry    — ownership + conflict detection (OwnershipRegistry)
-  verifier    — deterministic gate (FreedomVerifier)
-
-No manipulation detection, synthesis engine, or resolution queue.
-Those live in freedom_theory.extensions.
+  entities  — typed data (Entity, Resource, RightsClaim)
+  registry  — ownership graph + conflict detection
+  verifier  — deterministic gate (verify, verify_plan, verify_signed)
+  context   — ExecutionContext (bounded authority scope)
+  goals     — GoalNode + verify_goal_tree (Stage 2)
 """
 try:
     from freedom_kernel import (  # type: ignore[import]

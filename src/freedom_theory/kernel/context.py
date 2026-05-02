@@ -62,7 +62,7 @@ class ExecutionContext:
         Verify an action within this context's bounded authority.
         Context expiry and revocation are checked before the kernel gate.
         """
-        from freedom_theory.kernel.verifier import Action as _Action, VerificationResult
+        from freedom_theory.kernel.verifier import VerificationResult
 
         if self._revoked:
             return VerificationResult(
