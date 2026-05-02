@@ -246,6 +246,54 @@ impl FreedomVerifier {
         Ok(wire_to_result(r))
     }
 
+    /// Verify a sequence of actions as a plan.
+    ///
+    /// If any action triggers a hard sovereignty flag (FORBIDDEN violation), the
+    /// remaining actions are cancelled rather than evaluated — the plan itself
+    /// reveals intent to subvert the system. Returns one result per action.
+    pub fn verify_plan(
+        &self,
+        py: Python<'_>,
+        actions: Vec<PyRef<Action>>,
+    ) -> PyResult<Vec<VerificationResult>> {
+        let reg_w = {
+            let reg = self.registry.borrow(py);
+            let inner = reg.inner.lock().unwrap();
+            registry_wire(&inner)
+        };
+
+        let mut results: Vec<VerificationResult> = Vec::new();
+
+        for (i, action) in actions.iter().enumerate() {
+            let r = wire_to_result(crate::engine::verify(&reg_w, &action_wire(action)));
+            let has_forbidden = r.violations.iter().any(|v| v.contains("FORBIDDEN"));
+            results.push(r);
+
+            if has_forbidden {
+                let trigger_id = actions[i].action_id.clone();
+                for remaining in actions.iter().skip(i + 1) {
+                    results.push(VerificationResult {
+                        action_id: remaining.action_id.clone(),
+                        permitted: false,
+                        violations: vec![format!(
+                            "Plan aborted: action '{}' triggered a sovereignty violation. \
+                             Remaining plan cancelled.",
+                            trigger_id
+                        )],
+                        warnings: vec![],
+                        confidence: 0.0,
+                        requires_human_arbitration: true,
+                        manipulation_score: 0.0,
+                        signature: None,
+                        signing_key: None,
+                    });
+                }
+                return Ok(results);
+            }
+        }
+        Ok(results)
+    }
+
     /// Verify action and attach an ed25519 signature to the result.
     pub fn verify_signed(
         &self,
