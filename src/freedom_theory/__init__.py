@@ -2,9 +2,13 @@
 Freedom Kernel — Capability-security operating layer for autonomous agents.
 
 Architecture:
-  kernel/     — minimal formal gate (FreedomVerifier, ExecutionContext)
+  kernel/     — minimal formal gate (FreedomVerifier, ExecutionContext, GoalNode)
+  adapters/   — framework adapters (OpenAI, Anthropic, LangChain)
   extensions/ — pluggable layers on top (manipulation detection, synthesis, compass)
 """
+from freedom_theory.adapters.anthropic import AnthropicKernelAdapter
+from freedom_theory.adapters.langchain import FreedomTool, kernel_gate
+from freedom_theory.adapters.openai_agents import OpenAIKernelMiddleware
 from freedom_theory.extensions import ExtendedFreedomVerifier
 from freedom_theory.extensions.compass import WorldState
 from freedom_theory.extensions.compass import score as compass_score
@@ -23,8 +27,10 @@ from freedom_theory.kernel import (
     VerificationResult,
 )
 from freedom_theory.kernel.context import ExecutionContext
+from freedom_theory.kernel.goals import GoalNode, GoalVerificationResult, verify_goal_tree
 
 __all__ = [
+    # Core kernel
     "AgentType",
     "Entity",
     "Resource",
@@ -34,9 +40,19 @@ __all__ = [
     "OwnershipRegistry",
     "Action",
     "FreedomVerifier",
-    "ExtendedFreedomVerifier",
     "VerificationResult",
+    # Stage 2: bounded contexts + goal verification
     "ExecutionContext",
+    "GoalNode",
+    "GoalVerificationResult",
+    "verify_goal_tree",
+    # Stage 3: framework adapters
+    "OpenAIKernelMiddleware",
+    "AnthropicKernelAdapter",
+    "FreedomTool",
+    "kernel_gate",
+    # Extensions
+    "ExtendedFreedomVerifier",
     "WorldState",
     "compass_score",
     "detect_manipulation",
