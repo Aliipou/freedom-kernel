@@ -1,22 +1,9 @@
 """
-Freedom Theory AI — Formal Axiomatic Ethics System for AGI
-
-Based on: نظریه آزادی (Theory of Freedom) by Mohammad Ali Jannat Khah Doust
-
-Declared axiom (ontological, not runtime-enforced):
-  A1: Person(h) → OwnedByGod(h)
-
-Runtime-enforced axioms (machine-context only):
-  A2: No human owns another human.
-  A3: Every person has typed, scoped property rights over digital resources they own.
-  A4: Every machine has a registered human owner.
-  A5: Machine operational scope ⊆ owner's property scope.
-  A6: No machine owns or governs any human.
-  A7: Machines act only on explicitly delegated resources.
+Freedom Kernel — Capability-security operating layer for autonomous agents.
 
 Architecture:
-  kernel/     — minimal formal gate (FreedomVerifier)
-  extensions/ — pluggable capabilities (ExtendedFreedomVerifier + compass + detection)
+  kernel/     — minimal formal gate (FreedomVerifier, ExecutionContext)
+  extensions/ — pluggable layers on top (manipulation detection, synthesis, compass)
 """
 from freedom_theory.extensions import ExtendedFreedomVerifier
 from freedom_theory.extensions.compass import WorldState
@@ -35,6 +22,7 @@ from freedom_theory.kernel import (
     RightsClaim,
     VerificationResult,
 )
+from freedom_theory.kernel.context import ExecutionContext
 
 __all__ = [
     "AgentType",
@@ -48,6 +36,7 @@ __all__ = [
     "FreedomVerifier",
     "ExtendedFreedomVerifier",
     "VerificationResult",
+    "ExecutionContext",
     "WorldState",
     "compass_score",
     "detect_manipulation",

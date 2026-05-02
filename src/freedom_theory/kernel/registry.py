@@ -34,7 +34,67 @@ class OwnershipRegistry:
         self._conflict_hook = hook
 
     def add_claim(self, claim: RightsClaim) -> None:
+        """Assert a rights claim directly (ownership assertion, no attenuation check)."""
         with self._lock:
+            conflict = self._detect_conflict(claim)
+            if conflict:
+                self._conflicts.append(conflict)
+                if self._conflict_hook:
+                    self._conflict_hook(conflict)
+            self._claims.append(claim)
+
+    def delegate(self, claim: RightsClaim, delegated_by: Entity) -> None:
+        """
+        Delegate a claim from delegated_by to claim.holder.
+
+        Enforces the attenuation principle: you cannot grant authority you do not have.
+          - delegated_by must hold a valid, delegatable claim on claim.resource
+          - claim.can_read  requires delegated_by.can_read
+          - claim.can_write requires delegated_by.can_write
+          - claim.can_delegate requires delegated_by.can_delegate
+          - claim.confidence <= delegated_by's best confidence
+
+        This is the primitive that makes the ownership graph a real capability system
+        rather than just annotations.
+        """
+        with self._lock:
+            # find delegator's best delegatable claim on this resource
+            candidates = [
+                c for c in self._claims
+                if c.holder == delegated_by
+                and c.resource == claim.resource
+                and c.can_delegate
+                and c.is_valid()
+            ]
+            if not candidates:
+                raise PermissionError(
+                    f"Attenuation violation: {delegated_by.name} holds no valid "
+                    f"delegatable claim on {claim.resource}. Cannot delegate to "
+                    f"{claim.holder.name}."
+                )
+            best = max(candidates, key=lambda c: c.confidence)
+
+            if claim.can_read and not best.can_read:
+                raise PermissionError(
+                    f"Attenuation: {delegated_by.name} cannot delegate read on "
+                    f"{claim.resource} (delegator lacks read)."
+                )
+            if claim.can_write and not best.can_write:
+                raise PermissionError(
+                    f"Attenuation: {delegated_by.name} cannot delegate write on "
+                    f"{claim.resource} (delegator lacks write)."
+                )
+            if claim.can_delegate and not best.can_delegate:
+                raise PermissionError(
+                    f"Attenuation: {delegated_by.name} cannot sub-delegate "
+                    f"{claim.resource} (delegator lacks delegate)."
+                )
+            if claim.confidence > best.confidence:
+                raise PermissionError(
+                    f"Attenuation: confidence {claim.confidence:.2f} exceeds "
+                    f"{delegated_by.name}'s {best.confidence:.2f} on {claim.resource}."
+                )
+
             conflict = self._detect_conflict(claim)
             if conflict:
                 self._conflicts.append(conflict)
