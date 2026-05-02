@@ -9,10 +9,19 @@
  *   4. Attenuation             — delegation cannot exceed delegator's authority
  *   5. Machine sovereignty     — no machine accumulates unconstrained authority
  *
- * Status: research-grade (not yet model-checked to exhaustion).
- * Next step: run TLC model checker on finite instances.
+ * Status: research-grade specification with stated invariants.
+ *
+ * Honest scope:
+ *   DOES model: authority graph, delegation lattice, sovereignty flag gate
+ *   DOES NOT model: emergent plan behavior, state mutation during execution,
+ *                   information flow, concurrent registry modification,
+ *                   ownership semantics for non-rival digital goods
+ *
+ * The THEOREM declarations below are stated targets, not mechanically
+ * verified results. Next step: run TLC on a 3-entity/3-resource instance.
  *
  * Reference: نظریه آزادی by Mohammad Ali Jannat Khah Doust, pp. 791-816
+ * Formal semantics: see SEMANTICS.md
  *)
 
 EXTENDS Naturals, FiniteSets, Sequences, TLC

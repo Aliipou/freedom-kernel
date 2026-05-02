@@ -171,11 +171,21 @@ class FreedomVerifier:
 
     def verify_plan(self, actions: list[Action]) -> list[VerificationResult]:
         """
-        Verify a sequence of actions as a plan (Stage 2).
+        Check per-action authority for each step in a plan.
 
-        Each action is verified in order. If a hard sovereignty flag fires,
-        the remaining actions are cancelled rather than evaluated — the plan
-        itself reveals intent to subvert the system.
+        Formally checks: ∀ i: Permitted(actions[i], registry)
+        Plus: if any action triggers a sovereignty flag, remaining actions
+        are cancelled (the plan itself reveals subversion intent).
+
+        IMPORTANT — what this does NOT check:
+          - Emergent behavior: individually-permitted actions that collectively cause harm
+          - State mutation: whether action[i] changes authority for action[i+1]
+          - Indirect effects, side channels, information leakage
+          - Whether the plan achieves its stated goal
+          - Hidden subgoals embedded in argument/description fields
+
+        A PERMITTED result means "the agent holds the claimed authority at this
+        moment." It is a necessary condition, not a sufficient one. See SEMANTICS.md.
 
         Returns one VerificationResult per action.
         """
