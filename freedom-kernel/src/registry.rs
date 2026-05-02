@@ -313,6 +313,80 @@ impl OwnershipRegistry {
         self.inner.lock().unwrap().can_act(&hk, &rk, operation)
     }
 
+    /// Delegate a claim from `delegated_by` to `claim.holder`.
+    ///
+    /// Enforces attenuation: delegated_by must hold a valid, delegatable claim on
+    /// claim.resource, and the new claim cannot exceed the delegator's rights or confidence.
+    pub fn delegate(
+        &self,
+        py: Python<'_>,
+        claim: PyRef<RightsClaim>,
+        delegated_by: PyRef<Entity>,
+    ) -> PyResult<()> {
+        let delegator_key = entity_to_key(&delegated_by);
+        let resource_key = resource_to_key(&claim.resource);
+
+        let (best_read, best_write, best_delegate, best_conf) = {
+            let inner = self.inner.lock().unwrap();
+            let candidates: Vec<&ClaimEntry> = inner
+                .claims
+                .iter()
+                .filter(|c| {
+                    c.holder == delegator_key
+                        && c.resource == resource_key
+                        && c.can_delegate
+                        && c.is_valid()
+                })
+                .collect();
+
+            if candidates.is_empty() {
+                return Err(pyo3::exceptions::PyPermissionError::new_err(format!(
+                    "Attenuation violation: {} holds no valid delegatable claim on {}:{}. \
+                     Cannot delegate to {}.",
+                    delegated_by.name,
+                    resource_key.rtype,
+                    resource_key.name,
+                    claim.holder.name,
+                )));
+            }
+
+            let best = candidates
+                .iter()
+                .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap())
+                .unwrap();
+            (best.can_read, best.can_write, best.can_delegate, best.confidence)
+        };
+
+        if claim.can_read && !best_read {
+            return Err(pyo3::exceptions::PyPermissionError::new_err(format!(
+                "Attenuation: {} cannot delegate read on {}:{} (delegator lacks read).",
+                delegated_by.name, resource_key.rtype, resource_key.name,
+            )));
+        }
+        if claim.can_write && !best_write {
+            return Err(pyo3::exceptions::PyPermissionError::new_err(format!(
+                "Attenuation: {} cannot delegate write on {}:{} (delegator lacks write).",
+                delegated_by.name, resource_key.rtype, resource_key.name,
+            )));
+        }
+        if claim.can_delegate && !best_delegate {
+            return Err(pyo3::exceptions::PyPermissionError::new_err(format!(
+                "Attenuation: {} cannot sub-delegate {}:{} (delegator lacks delegate).",
+                delegated_by.name, resource_key.rtype, resource_key.name,
+            )));
+        }
+        if claim.confidence > best_conf + 1e-9 {
+            return Err(pyo3::exceptions::PyPermissionError::new_err(format!(
+                "Attenuation: confidence {:.2} exceeds {}'s {:.2} on {}:{}.",
+                claim.confidence, delegated_by.name, best_conf,
+                resource_key.rtype, resource_key.name,
+            )));
+        }
+
+        // All checks passed — add the claim (with conflict detection, same as add_claim)
+        self.add_claim(py, claim)
+    }
+
     pub fn open_conflicts(&self, py: Python<'_>) -> PyResult<Vec<PyObject>> {
         let inner = self.inner.lock().unwrap();
         let mut result = Vec::new();
