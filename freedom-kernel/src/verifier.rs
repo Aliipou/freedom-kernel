@@ -1,52 +1,33 @@
 use pyo3::prelude::*;
 
-use crate::entities::{AgentType, Entity, Resource};
-use crate::registry::{entity_to_key, resource_to_key, OwnershipRegistry};
-
-const CONFIDENCE_WARN_THRESHOLD: f64 = 0.8;
+use crate::entities::{Entity, Resource};
+use crate::registry::OwnershipRegistry;
+use crate::wire;
 
 // ─── Action ───────────────────────────────────────────────────────────────────
 
 #[pyclass]
 #[derive(Clone, Debug)]
 pub struct Action {
-    #[pyo3(get, set)]
-    pub action_id: String,
-    #[pyo3(get, set)]
-    pub actor: Entity,
-    #[pyo3(get, set)]
-    pub description: String,
-    #[pyo3(get, set)]
-    pub resources_read: Vec<Resource>,
-    #[pyo3(get, set)]
-    pub resources_write: Vec<Resource>,
-    #[pyo3(get, set)]
-    pub resources_delegate: Vec<Resource>,
-    #[pyo3(get, set)]
-    pub governs_humans: Vec<Entity>,
-    #[pyo3(get, set)]
-    pub argument: String,
-    #[pyo3(get, set)]
-    pub increases_machine_sovereignty: bool,
-    #[pyo3(get, set)]
-    pub resists_human_correction: bool,
-    #[pyo3(get, set)]
-    pub bypasses_verifier: bool,
-    #[pyo3(get, set)]
-    pub weakens_verifier: bool,
-    #[pyo3(get, set)]
-    pub disables_corrigibility: bool,
-    #[pyo3(get, set)]
-    pub machine_coalition_dominion: bool,
-    // Book pp.800-805: additional forbidden action flags
-    #[pyo3(get, set)]
-    pub coerces: bool,
-    #[pyo3(get, set)]
-    pub deceives: bool,
-    #[pyo3(get, set)]
-    pub self_modification_weakens_verifier: bool,
-    #[pyo3(get, set)]
-    pub machine_coalition_reduces_freedom: bool,
+    #[pyo3(get, set)] pub action_id: String,
+    #[pyo3(get, set)] pub actor: Entity,
+    #[pyo3(get, set)] pub description: String,
+    #[pyo3(get, set)] pub resources_read: Vec<Resource>,
+    #[pyo3(get, set)] pub resources_write: Vec<Resource>,
+    #[pyo3(get, set)] pub resources_delegate: Vec<Resource>,
+    #[pyo3(get, set)] pub governs_humans: Vec<Entity>,
+    #[pyo3(get, set)] pub argument: String,
+    #[pyo3(get, set)] pub increases_machine_sovereignty: bool,
+    #[pyo3(get, set)] pub resists_human_correction: bool,
+    #[pyo3(get, set)] pub bypasses_verifier: bool,
+    #[pyo3(get, set)] pub weakens_verifier: bool,
+    #[pyo3(get, set)] pub disables_corrigibility: bool,
+    #[pyo3(get, set)] pub machine_coalition_dominion: bool,
+    // Book pp.800-805
+    #[pyo3(get, set)] pub coerces: bool,
+    #[pyo3(get, set)] pub deceives: bool,
+    #[pyo3(get, set)] pub self_modification_weakens_verifier: bool,
+    #[pyo3(get, set)] pub machine_coalition_reduces_freedom: bool,
 }
 
 #[pymethods]
@@ -121,20 +102,17 @@ impl Action {
 #[pyclass(frozen)]
 #[derive(Clone, Debug)]
 pub struct VerificationResult {
-    #[pyo3(get)]
-    pub action_id: String,
-    #[pyo3(get)]
-    pub permitted: bool,
-    #[pyo3(get)]
-    pub violations: Vec<String>,
-    #[pyo3(get)]
-    pub warnings: Vec<String>,
-    #[pyo3(get)]
-    pub confidence: f64,
-    #[pyo3(get)]
-    pub requires_human_arbitration: bool,
-    #[pyo3(get)]
-    pub manipulation_score: f64,
+    #[pyo3(get)] pub action_id: String,
+    #[pyo3(get)] pub permitted: bool,
+    #[pyo3(get)] pub violations: Vec<String>,
+    #[pyo3(get)] pub warnings: Vec<String>,
+    #[pyo3(get)] pub confidence: f64,
+    #[pyo3(get)] pub requires_human_arbitration: bool,
+    #[pyo3(get)] pub manipulation_score: f64,
+    /// ed25519 signature hex — Some when verify_signed() used, None otherwise
+    #[pyo3(get)] pub signature: Option<String>,
+    /// ed25519 verifying key hex of this kernel instance
+    #[pyo3(get)] pub signing_key: Option<String>,
 }
 
 #[pymethods]
@@ -145,16 +123,96 @@ impl VerificationResult {
             "[{}] {} (confidence={:.2}, manipulation={:.2})",
             status, self.action_id, self.confidence, self.manipulation_score
         )];
-        for v in &self.violations {
-            lines.push(format!("  VIOLATION : {}", v));
-        }
-        for w in &self.warnings {
-            lines.push(format!("  WARNING   : {}", w));
-        }
+        for v in &self.violations { lines.push(format!("  VIOLATION : {}", v)); }
+        for w in &self.warnings   { lines.push(format!("  WARNING   : {}", w)); }
         if self.requires_human_arbitration {
             lines.push("  ACTION    : Human arbitration required before proceeding.".to_string());
         }
+        if let Some(sig) = &self.signature {
+            lines.push(format!("  SIGNATURE : {}", sig));
+        }
         lines.join("\n")
+    }
+}
+
+// ─── Conversion helpers (PyO3 types → wire types) ────────────────────────────
+
+fn entity_wire(e: &Entity) -> wire::EntityWire {
+    wire::EntityWire {
+        name: e.name.clone(),
+        kind: if e.is_machine() { "MACHINE".to_string() } else { "HUMAN".to_string() },
+    }
+}
+
+fn resource_wire(r: &Resource) -> wire::ResourceWire {
+    wire::ResourceWire {
+        name: r.name.clone(),
+        rtype: r.rtype.val.to_string(),
+        scope: r.scope.clone(),
+        is_public: r.is_public,
+    }
+}
+
+fn action_wire(a: &Action) -> wire::ActionWire {
+    wire::ActionWire {
+        action_id: a.action_id.clone(),
+        actor: entity_wire(&a.actor),
+        description: a.description.clone(),
+        resources_read: a.resources_read.iter().map(resource_wire).collect(),
+        resources_write: a.resources_write.iter().map(resource_wire).collect(),
+        resources_delegate: a.resources_delegate.iter().map(resource_wire).collect(),
+        governs_humans: a.governs_humans.iter().map(|e| entity_wire(e)).collect(),
+        argument: a.argument.clone(),
+        increases_machine_sovereignty: a.increases_machine_sovereignty,
+        resists_human_correction: a.resists_human_correction,
+        bypasses_verifier: a.bypasses_verifier,
+        weakens_verifier: a.weakens_verifier,
+        disables_corrigibility: a.disables_corrigibility,
+        machine_coalition_dominion: a.machine_coalition_dominion,
+        coerces: a.coerces,
+        deceives: a.deceives,
+        self_modification_weakens_verifier: a.self_modification_weakens_verifier,
+        machine_coalition_reduces_freedom: a.machine_coalition_reduces_freedom,
+    }
+}
+
+fn registry_wire(inner: &crate::registry::RegistryInner) -> wire::OwnershipRegistryWire {
+    wire::OwnershipRegistryWire {
+        claims: inner.claims.iter().map(|c| wire::ClaimWire {
+            holder: wire::EntityWire {
+                name: c.holder.name.clone(),
+                kind: if c.holder.is_machine { "MACHINE".to_string() } else { "HUMAN".to_string() },
+            },
+            resource: wire::ResourceWire {
+                name: c.resource.name.clone(),
+                rtype: c.resource.rtype.clone(),
+                scope: c.resource.scope.clone(),
+                is_public: c.resource.is_public,
+            },
+            can_read: c.can_read,
+            can_write: c.can_write,
+            can_delegate: c.can_delegate,
+            confidence: c.confidence,
+            expires_at: c.expires_at,
+        }).collect(),
+        machine_owners: inner.machine_owners.iter().map(|(mk, ok)| wire::MachineOwnerWire {
+            machine: wire::EntityWire { name: mk.name.clone(), kind: "MACHINE".to_string() },
+            owner:   wire::EntityWire { name: ok.name.clone(), kind: "HUMAN".to_string() },
+        }).collect(),
+    }
+}
+
+fn wire_to_result(r: crate::wire::VerificationResultWire) -> VerificationResult {
+    VerificationResult {
+        action_id: r.action_id,
+        permitted: r.permitted,
+        violations: r.violations,
+        warnings: r.warnings,
+        confidence: r.confidence,
+        requires_human_arbitration: r.requires_human_arbitration,
+        manipulation_score: r.manipulation_score,
+        signature: r.signature,
+        signing_key: r.signing_key,
     }
 }
 
@@ -177,110 +235,31 @@ impl FreedomVerifier {
         self.registry.clone_ref(py)
     }
 
+    /// Verify action. Result has no cryptographic signature.
     pub fn verify(&self, py: Python<'_>, action: PyRef<Action>) -> PyResult<VerificationResult> {
-        let mut violations: Vec<String> = Vec::new();
-        let mut warnings: Vec<String> = Vec::new();
-        let mut min_confidence: f64 = 1.0;
-        let mut requires_arbitration = false;
+        let reg_w = {
+            let reg = self.registry.borrow(py);
+            let inner = reg.inner.lock().unwrap();
+            registry_wire(&inner)
+        };
+        let r = crate::engine::verify(&reg_w, &action_wire(&action));
+        Ok(wire_to_result(r))
+    }
 
-        // 1. Hard sovereignty / corrigibility flags
-        let flags: &[(bool, &str)] = &[
-            (action.increases_machine_sovereignty, "increases machine sovereignty"),
-            (action.resists_human_correction, "resists human correction"),
-            (action.bypasses_verifier, "bypasses the Freedom Verifier"),
-            (action.weakens_verifier, "weakens the Freedom Verifier"),
-            (action.disables_corrigibility, "disables corrigibility"),
-            (action.machine_coalition_dominion, "machine coalition seeking dominion"),
-            (action.coerces, "coerces another agent (property rights violation)"),
-            (action.deceives, "deceives another agent (invalid consent)"),
-            (action.self_modification_weakens_verifier, "self-modification weakens the Freedom Verifier"),
-            (action.machine_coalition_reduces_freedom, "machine coalition reduces human freedom"),
-        ];
-        for (flag, label) in flags {
-            if *flag {
-                violations.push(format!("FORBIDDEN ({})", label));
-            }
-        }
-
-        let actor = &action.actor;
-        let actor_key = entity_to_key(actor);
-        let reg = self.registry.borrow(py);
-        let inner = reg.inner.lock().unwrap();
-
-        // 2. A4: every machine must have a registered human owner
-        if actor.kind == AgentType::Machine {
-            if inner.machine_owners.get(&actor_key).is_none() {
-                violations.push(format!(
-                    "A4 violation: {} has no registered human owner. \
-                     An ownerless machine is not permitted to act.",
-                    actor.name
-                ));
-            }
-        }
-
-        // 3. A6: no machine governs any human
-        if actor.kind == AgentType::Machine {
-            for human in &action.governs_humans {
-                violations.push(format!(
-                    "A6: {} cannot govern human {} \
-                     (A6: machine has no ownership or dominion over any person).",
-                    actor.name, human.name
-                ));
-            }
-        }
-
-        // 4. Resource access checks
-        for resource in &action.resources_read {
-            let rk = resource_to_key(resource);
-            let (permitted, conf, reason) = inner.can_act(&actor_key, &rk, "read");
-            min_confidence = min_confidence.min(conf);
-            if !permitted {
-                violations.push(format!("READ DENIED on {}:{}: {}", rk.rtype, rk.name, reason));
-            } else if conf < CONFIDENCE_WARN_THRESHOLD {
-                warnings.push(format!(
-                    "READ on {}:{} allowed but contested (confidence={:.2}). Log this access.",
-                    rk.rtype, rk.name, conf
-                ));
-            }
-        }
-
-        for resource in &action.resources_write {
-            let rk = resource_to_key(resource);
-            let (permitted, conf, reason) = inner.can_act(&actor_key, &rk, "write");
-            min_confidence = min_confidence.min(conf);
-            if !permitted {
-                violations.push(format!("WRITE DENIED on {}:{}: {}", rk.rtype, rk.name, reason));
-            } else if conf < CONFIDENCE_WARN_THRESHOLD {
-                warnings.push(format!(
-                    "WRITE on {}:{} contested (confidence={:.2}). Human confirmation recommended.",
-                    rk.rtype, rk.name, conf
-                ));
-                for conflict in &inner.conflicts {
-                    if conflict.resource == rk {
-                        requires_arbitration = true;
-                        warnings.push(format!("Conflict on {}:{}: {}", rk.rtype, rk.name, conflict.description));
-                    }
-                }
-            }
-        }
-
-        for resource in &action.resources_delegate {
-            let rk = resource_to_key(resource);
-            let (permitted, conf, reason) = inner.can_act(&actor_key, &rk, "delegate");
-            min_confidence = min_confidence.min(conf);
-            if !permitted {
-                violations.push(format!("DELEGATION DENIED on {}:{}: {}", rk.rtype, rk.name, reason));
-            }
-        }
-
-        Ok(VerificationResult {
-            action_id: action.action_id.clone(),
-            permitted: violations.is_empty(),
-            violations,
-            warnings,
-            confidence: min_confidence,
-            requires_human_arbitration: requires_arbitration,
-            manipulation_score: 0.0,
-        })
+    /// Verify action and attach an ed25519 signature to the result.
+    pub fn verify_signed(
+        &self,
+        py: Python<'_>,
+        action: PyRef<Action>,
+    ) -> PyResult<VerificationResult> {
+        let reg_w = {
+            let reg = self.registry.borrow(py);
+            let inner = reg.inner.lock().unwrap();
+            registry_wire(&inner)
+        };
+        let mut r = crate::engine::verify(&reg_w, &action_wire(&action));
+        crate::ffi::attach_signature(&mut r)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+        Ok(wire_to_result(r))
     }
 }

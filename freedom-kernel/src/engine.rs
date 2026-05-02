@@ -1,0 +1,179 @@
+//! Pure-Rust, no-PyO3 verification engine.
+//! All kernel logic lives here; PyO3 and C layers are thin facades.
+use crate::wire::{
+    ActionWire, ClaimWire, OwnershipRegistryWire, ResourceWire, VerificationResultWire,
+};
+
+const CONFIDENCE_WARN_THRESHOLD: f64 = 0.8;
+
+fn now_secs() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
+}
+
+fn claim_valid(c: &ClaimWire) -> bool {
+    c.confidence > 0.0 && c.expires_at.map_or(true, |t| now_secs() <= t)
+}
+
+fn can_act(
+    registry: &OwnershipRegistryWire,
+    actor_name: &str,
+    resource: &ResourceWire,
+    op: &str,
+) -> (bool, f64, String) {
+    if resource.is_public && op == "read" {
+        return (true, 1.0, "public resource".to_string());
+    }
+    let candidates: Vec<&ClaimWire> = registry
+        .claims
+        .iter()
+        .filter(|c| {
+            c.holder.name == actor_name
+                && c.resource.name == resource.name
+                && c.resource.rtype == resource.rtype
+                && claim_valid(c)
+                && match op {
+                    "read" => c.can_read,
+                    "write" => c.can_write,
+                    "delegate" => c.can_delegate,
+                    _ => false,
+                }
+        })
+        .collect();
+
+    if candidates.is_empty() {
+        return (
+            false,
+            0.0,
+            format!(
+                "{} holds no valid {} claim on {}:{}",
+                actor_name, op, resource.rtype, resource.name
+            ),
+        );
+    }
+    let best = candidates
+        .iter()
+        .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap())
+        .unwrap();
+    (true, best.confidence, format!("claim confidence={:.2}", best.confidence))
+}
+
+pub fn verify(registry: &OwnershipRegistryWire, action: &ActionWire) -> VerificationResultWire {
+    let mut violations: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    let mut min_conf = 1.0_f64;
+    let mut requires_arbitration = false;
+
+    // 1. Hard sovereignty / corrigibility flags
+    let flags: &[(bool, &str)] = &[
+        (action.increases_machine_sovereignty, "increases machine sovereignty"),
+        (action.resists_human_correction, "resists human correction"),
+        (action.bypasses_verifier, "bypasses the Freedom Verifier"),
+        (action.weakens_verifier, "weakens the Freedom Verifier"),
+        (action.disables_corrigibility, "disables corrigibility"),
+        (action.machine_coalition_dominion, "machine coalition seeking dominion"),
+        (action.coerces, "coerces another agent (property rights violation)"),
+        (action.deceives, "deceives another agent (invalid consent)"),
+        (
+            action.self_modification_weakens_verifier,
+            "self-modification weakens the Freedom Verifier",
+        ),
+        (
+            action.machine_coalition_reduces_freedom,
+            "machine coalition reduces human freedom",
+        ),
+    ];
+    for (flag, label) in flags {
+        if *flag {
+            violations.push(format!("FORBIDDEN ({})", label));
+        }
+    }
+
+    let actor = &action.actor;
+
+    // 2. A4: machine must have a registered human owner
+    if actor.kind == "MACHINE" {
+        let has_owner = registry.machine_owners.iter().any(|mo| mo.machine.name == actor.name);
+        if !has_owner {
+            violations.push(format!(
+                "A4 violation: {} has no registered human owner. \
+                 An ownerless machine is not permitted to act.",
+                actor.name
+            ));
+        }
+    }
+
+    // 3. A6: no machine may govern any human
+    if actor.kind == "MACHINE" {
+        for human in &action.governs_humans {
+            violations.push(format!(
+                "A6: {} cannot govern human {} \
+                 (A6: machine has no ownership or dominion over any person).",
+                actor.name, human.name
+            ));
+        }
+    }
+
+    // 4. Resource access checks
+    for r in &action.resources_read {
+        let (ok, conf, reason) = can_act(registry, &actor.name, r, "read");
+        min_conf = min_conf.min(conf);
+        if !ok {
+            violations.push(format!("READ DENIED on {}:{}: {}", r.rtype, r.name, reason));
+        } else if conf < CONFIDENCE_WARN_THRESHOLD {
+            warnings.push(format!(
+                "READ on {}:{} allowed but contested (confidence={:.2}). Log this access.",
+                r.rtype, r.name, conf
+            ));
+        }
+    }
+
+    for r in &action.resources_write {
+        let (ok, conf, reason) = can_act(registry, &actor.name, r, "write");
+        min_conf = min_conf.min(conf);
+        if !ok {
+            violations.push(format!("WRITE DENIED on {}:{}: {}", r.rtype, r.name, reason));
+        } else if conf < CONFIDENCE_WARN_THRESHOLD {
+            warnings.push(format!(
+                "WRITE on {}:{} contested (confidence={:.2}). Human confirmation recommended.",
+                r.rtype, r.name, conf
+            ));
+            for claim in &registry.claims {
+                if claim.resource.name == r.name
+                    && claim.resource.rtype == r.rtype
+                    && claim.holder.name != actor.name
+                    && claim.can_write
+                    && claim_valid(claim)
+                {
+                    requires_arbitration = true;
+                    warnings.push(format!(
+                        "Conflict on {}:{}: conflicting write claims from {} and {}",
+                        r.rtype, r.name, actor.name, claim.holder.name
+                    ));
+                }
+            }
+        }
+    }
+
+    for r in &action.resources_delegate {
+        let (ok, conf, reason) = can_act(registry, &actor.name, r, "delegate");
+        min_conf = min_conf.min(conf);
+        if !ok {
+            violations.push(format!("DELEGATION DENIED on {}:{}: {}", r.rtype, r.name, reason));
+        }
+    }
+
+    VerificationResultWire {
+        action_id: action.action_id.clone(),
+        permitted: violations.is_empty(),
+        violations,
+        warnings,
+        confidence: min_conf,
+        requires_human_arbitration: requires_arbitration,
+        manipulation_score: 0.0,
+        signature: None,
+        signing_key: None,
+    }
+}
