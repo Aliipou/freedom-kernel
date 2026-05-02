@@ -2,7 +2,7 @@
 
 **Capability-security governance layer for agentic AI systems**
 
-[![CI](https://github.com/Aliipou/freedom-theory-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/Aliipou/freedom-theory-ai/actions)
+[![CI](https://github.com/Aliipou/freedom-kernel/actions/workflows/ci.yml/badge.svg)](https://github.com/Aliipou/freedom-kernel/actions)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![Rust](https://img.shields.io/badge/kernel-Rust-orange.svg)](freedom-kernel/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
