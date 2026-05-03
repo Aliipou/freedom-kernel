@@ -73,6 +73,9 @@ class Rights:
         return getattr(self, f"can_{operation}", False)
 
 
+_IMMUTABLE_SLOTS = frozenset(("_resource", "_rights", "_store_secret"))
+
+
 class Capability:
     """
     An unforgeable, delegatable, attenuatable reference to a resource.
@@ -82,14 +85,20 @@ class Capability:
     because they cannot possess the store's per-instance secret.
     """
 
-    __slots__ = ("_resource", "_rights", "_store_secret", "_revoked", "_children")
+    __slots__ = ("_resource", "_rights", "_store_secret", "_revoked", "_children", "_initialized")
 
     def __init__(self, resource: object, rights: Rights, *, _store_secret: str) -> None:
-        self._resource = resource
-        self._rights = rights
-        self._store_secret = _store_secret
-        self._revoked = False
-        self._children: list[Capability] = []
+        object.__setattr__(self, "_resource", resource)
+        object.__setattr__(self, "_rights", rights)
+        object.__setattr__(self, "_store_secret", _store_secret)
+        object.__setattr__(self, "_revoked", False)
+        object.__setattr__(self, "_children", [])
+        object.__setattr__(self, "_initialized", True)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_initialized", False) and name in _IMMUTABLE_SLOTS:
+            raise AttributeError(f"cannot reassign {name!r} on a Capability after construction")
+        object.__setattr__(self, name, value)
 
     @property
     def resource(self) -> object:
