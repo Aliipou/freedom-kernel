@@ -82,8 +82,9 @@ class VerificationResult:
 
 
 class FreedomVerifier:
-    def __init__(self, registry: OwnershipRegistry) -> None:
+    def __init__(self, registry: OwnershipRegistry, audit_log: object = None) -> None:
         self.registry = registry
+        self._audit_log = audit_log
 
     def verify(self, action: Action) -> VerificationResult:
         violations: list[str] = []
@@ -159,7 +160,7 @@ class FreedomVerifier:
             if not permitted:
                 violations.append(f"DELEGATION DENIED on {resource}: {reason}")
 
-        return VerificationResult(
+        result = VerificationResult(
             action_id=action.action_id,
             permitted=len(violations) == 0,
             violations=tuple(violations),
@@ -168,6 +169,9 @@ class FreedomVerifier:
             requires_human_arbitration=requires_arbitration,
             manipulation_score=0.0,
         )
+        if self._audit_log is not None:
+            self._audit_log.record(result)
+        return result
 
     def verify_plan(self, actions: list[Action]) -> list[VerificationResult]:
         """

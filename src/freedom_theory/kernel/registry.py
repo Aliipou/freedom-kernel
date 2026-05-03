@@ -29,12 +29,40 @@ class OwnershipRegistry:
     _machine_owners: dict[Entity, Entity] = field(default_factory=dict)
     _conflicts: list[ConflictRecord] = field(default_factory=list)
     _conflict_hook: Callable[[ConflictRecord], None] | None = None
+    _frozen: bool = field(default=False, init=False)
+
+    def freeze(self) -> OwnershipRegistry:
+        """
+        Return an immutable snapshot of this registry.
+
+        The returned registry has the same claims, owners, and conflicts
+        as the original at the moment of freezing. Any attempt to mutate
+        the snapshot (add_claim, delegate, register_machine) raises RuntimeError.
+
+        Eliminates TOCTOU: freeze once, verify many times against the same state.
+        """
+        with self._lock:
+            snapshot = OwnershipRegistry(
+                _claims=list(self._claims),
+                _machine_owners=dict(self._machine_owners),
+                _conflicts=list(self._conflicts),
+            )
+            snapshot._frozen = True
+            return snapshot
+
+    def _check_mutable(self) -> None:
+        if self._frozen:
+            raise RuntimeError(
+                "Registry is frozen; mutations are not permitted on snapshots. "
+                "Call freeze() on the original registry, then verify against the snapshot."
+            )
 
     def set_conflict_hook(self, hook: Callable[[ConflictRecord], None]) -> None:
         self._conflict_hook = hook
 
     def add_claim(self, claim: RightsClaim) -> None:
         """Assert a rights claim directly (ownership assertion, no attenuation check)."""
+        self._check_mutable()
         with self._lock:
             conflict = self._detect_conflict(claim)
             if conflict:
@@ -57,6 +85,7 @@ class OwnershipRegistry:
         This is the primitive that makes the ownership graph a real capability system
         rather than just annotations.
         """
+        self._check_mutable()
         with self._lock:
             # find delegator's best delegatable claim on this resource
             candidates = [
@@ -103,6 +132,7 @@ class OwnershipRegistry:
             self._claims.append(claim)
 
     def register_machine(self, machine: Entity, owner: Entity) -> None:
+        self._check_mutable()
         if not machine.is_machine():
             raise TypeError(f"{machine.name} is not MACHINE.")
         if not owner.is_human():

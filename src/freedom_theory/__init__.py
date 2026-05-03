@@ -9,7 +9,12 @@ Architecture:
 from freedom_theory.adapters.anthropic import AnthropicKernelAdapter
 from freedom_theory.adapters.langchain import FreedomTool, kernel_gate
 from freedom_theory.adapters.openai_agents import OpenAIKernelMiddleware
-from freedom_theory.extensions import ExtendedFreedomVerifier
+from freedom_theory.extensions import (
+    ExtendedFreedomVerifier,
+    IFCViolation,
+    NonInterferenceChecker,
+    SecurityLattice,
+)
 from freedom_theory.extensions.compass import WorldState
 from freedom_theory.extensions.compass import score as compass_score
 from freedom_theory.extensions.detection import detect as detect_manipulation
@@ -26,6 +31,7 @@ from freedom_theory.kernel import (
     RightsClaim,
     VerificationResult,
 )
+from freedom_theory.kernel.audit import AuditLog
 from freedom_theory.kernel.context import ExecutionContext
 from freedom_theory.kernel.goals import GoalNode, GoalVerificationResult, verify_goal_tree
 
@@ -58,4 +64,10 @@ __all__ = [
     "detect_manipulation",
     "ProposedRule",
     "SynthesisEngine",
+    # IFC
+    "IFCViolation",
+    "NonInterferenceChecker",
+    "SecurityLattice",
+    # Audit
+    "AuditLog",
 ]
