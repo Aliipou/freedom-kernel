@@ -51,8 +51,10 @@ Action IR  (typed: actor, resources, flags — no natural language)
     ▼
 FreedomVerifier  (deterministic — no LLM, no I/O, no randomness)
     │
+    ├── IFC checker  (Bell-LaPadula non-interference, optional)
+    │
     ▼
-PERMITTED  ─── execute
+PERMITTED  ─── execute  ──► AuditLog (append-only JSON record)
 BLOCKED    ─── halt + surface violations to human owner
 ```
 
@@ -64,7 +66,10 @@ BLOCKED    ─── halt + surface violations to human owner
 | **Delegation** | A machine acts only on resources its owner explicitly delegated (A7) |
 | **Sovereignty flags** | 10 hard invariants; any single flag = unconditional block |
 | **A6 constraint** | No machine governs any human |
+| **Scope semantics** | Claims match sub-paths under a scope prefix (formal prefix rule) |
+| **IFC** | Bell-LaPadula label ordering; information never flows downward |
 | **Confidence** | Contested claims produce warnings; conflicts trigger arbitration |
+| **TOCTOU safety** | `freeze()` snapshot eliminates time-of-check/time-of-use races |
 | **Cryptographic attestation** | ed25519 signature on every `VerificationResult` |
 
 ### Repository layout
@@ -73,25 +78,32 @@ BLOCKED    ─── halt + surface violations to human owner
 freedom-kernel/          Rust crate — the formal core
   src/
     engine.rs            pure Rust verification logic (no PyO3, auditable)
-    wire.rs              serde JSON wire types
+    wire.rs              serde JSON wire types (including ifc_label)
     crypto.rs            ed25519 signing
     ffi.rs               C ABI
-    entities.rs          PyO3 types
-    registry.rs          PyO3 registry
-    verifier.rs          PyO3 facade over engine.rs
+    entities.rs          PyO3 types (Resource with ifc_label)
+    registry.rs          PyO3 registry (freeze(), frozen guard)
+    verifier.rs          PyO3 facade over engine.rs (audit_log support)
+    kani_proofs.rs       Kani bounded model-checking harnesses (#[cfg(kani)])
   include/
     freedom_kernel.h     C header
 
 src/freedom_theory/
   kernel/                Python kernel (fallback when Rust not compiled)
-    entities.py
-    registry.py
-    verifier.py
+    entities.py          Resource, Entity, RightsClaim, scope_contains
+    registry.py          OwnershipRegistry with freeze() + conflict detection
+    verifier.py          FreedomVerifier with audit_log parameter
+    audit.py             AuditLog — append-only structured JSON log
     __init__.py          tries Rust first, falls back silently
   extensions/            pluggable layers on top of the kernel
+    ifc.py               Bell-LaPadula non-interference checker
     detection.py         manipulation detector
     synthesis.py         invariant-preserving rule admission
     compass.py           terminal-goal scorer
+    resolver.py          conflict queue
+
+formal/
+  plan_semantics.md      tractability boundary: what verify_plan proves vs does not
 ```
 
 ---
@@ -147,7 +159,7 @@ print(result.summary())
 # Blocked: sovereignty flag
 result = verifier.verify(Action("self-expand", bot, increases_machine_sovereignty=True))
 print(result.summary())
-# [BLOCKED] self-expand ...
+# [BLOCKED] self-expand
 #   VIOLATION : FORBIDDEN (increases machine sovereignty)
 
 # Blocked: no delegation (A7)
@@ -157,8 +169,94 @@ registry.add_claim(RightsClaim(bob, bob_data, can_read=True))
 
 result = verifier.verify(Action("read-bob", bot, resources_read=[bob_data]))
 print(result.summary())
-# [BLOCKED] read-bob ...
+# [BLOCKED] read-bob
 #   VIOLATION : READ DENIED on dataset:bob-private: ResearchBot holds no valid read claim
+```
+
+---
+
+## Scope semantics
+
+Resources carry an explicit `scope` path. The formal prefix rule:
+
+```
+scope_contains(parent, child)  iff  child == parent  or  child.startswith(parent.rstrip("/") + "/")
+```
+
+An empty scope matches any path. A scope `/data/alice` covers `/data/alice/report.csv` but not `/data/alice2`.
+
+```python
+from freedom_theory.kernel.entities import scope_contains
+
+scope_contains("/data/alice", "/data/alice/report.csv")  # True
+scope_contains("/data/alice", "/data/alice2")            # False — prefix is not a directory boundary
+scope_contains("", "/anything")                          # True  — root scope
+```
+
+---
+
+## Information flow control (IFC)
+
+The IFC extension enforces Bell-LaPadula non-interference on top of the kernel gate. Once an agent reads a resource with label `SECRET`, it may not write to a resource with label `PUBLIC` — information would flow downward.
+
+```python
+from freedom_theory import NonInterferenceChecker, SecurityLattice
+from freedom_theory.kernel.entities import Resource, ResourceType
+
+# Labels on resources — compare=False so label doesn't affect ownership equality
+secret_src = Resource("model-weights", ResourceType.MODEL_WEIGHTS, ifc_label="SECRET")
+public_sink = Resource("public-log",   ResourceType.FILE,          ifc_label="PUBLIC")
+
+# The checker wraps a FreedomVerifier
+checker = NonInterferenceChecker(verifier)
+
+# Raises IFCViolation if any write leaks a higher label downward
+checker.check_plan([
+    Action("read-weights",  bot, resources_read=[secret_src]),
+    Action("write-public",  bot, resources_write=[public_sink]),  # violation!
+])
+```
+
+Default lattice: `PUBLIC < INTERNAL < SECRET`. Labels are additive across actions — once `SECRET` is read, it taints all subsequent writes in the plan.
+
+---
+
+## Audit log
+
+Attach an `AuditLog` to record every verification decision as a structured JSON record:
+
+```python
+from freedom_theory import AuditLog, FreedomVerifier
+
+log = AuditLog(path="/var/log/kernel.jsonl")   # path=None keeps records in-memory
+verifier = FreedomVerifier(registry, audit_log=log)
+
+verifier.verify(action)
+
+# Each record: {"ts": 1234567890.1, "action_id": "...", "permitted": true,
+#               "confidence": 1.0, "violations": [], "warnings": [], "signature": null}
+print(len(log))        # 1
+print(log.entries())   # snapshot of all in-memory records
+```
+
+---
+
+## TOCTOU-safe snapshots
+
+`OwnershipRegistry.freeze()` returns an immutable snapshot. All mutations on the snapshot raise `RuntimeError`. Check authority once against a fixed state — no race between claim lookup and execution.
+
+```python
+snapshot = registry.freeze()
+
+# Safe: verify many actions against the same registry state
+for action in plan:
+    result = verifier_on_snapshot.verify(action)
+
+# Mutations on original still work
+registry.add_claim(new_claim)
+
+# Mutations on snapshot are rejected
+snapshot.add_claim(new_claim)  # RuntimeError: Registry is frozen
 ```
 
 ---
@@ -191,6 +289,29 @@ freedom_kernel_verify(
 ```
 
 JSON in, JSON out, ed25519 signed. Works from C, Go, Zig, Java (JNA), Node.js (ffi-napi), Rust.
+
+---
+
+## Formal verification
+
+Five Kani bounded model-checking harnesses verify engine properties at the Rust level:
+
+| Harness | Property |
+|---|---|
+| `prop_forbidden_flags_always_block` | Any FORBIDDEN flag unconditionally blocks |
+| `prop_ownerless_machine_blocked` | Ownerless machine rejected (A4) |
+| `prop_machine_governs_human_blocked` | Machine governing human blocked (A6) |
+| `prop_public_resource_read_permitted` | Public resource reads always permitted |
+| `prop_write_denied_without_claim` | Write requires an explicit write claim |
+
+```bash
+# Requires cargo-kani
+cargo kani --harness prop_forbidden_flags_always_block
+```
+
+Harnesses are gated behind `#[cfg(kani)]` and have zero impact on normal builds or tests.
+
+See [`formal/plan_semantics.md`](formal/plan_semantics.md) for the full tractability analysis — what `verify_plan` formally proves vs what requires symbolic execution or is undecidable.
 
 ---
 
@@ -236,6 +357,8 @@ Extensions wrap the kernel gate without modifying it. The kernel is always calle
 | Extension | Capability |
 |---|---|
 | `ExtendedFreedomVerifier` | Adds manipulation detection; populates `manipulation_score` |
+| `NonInterferenceChecker` | Bell-LaPadula IFC; raises `IFCViolation` on downward label flow |
+| `SecurityLattice` | Configurable label ordering (default: PUBLIC < INTERNAL < SECRET) |
 | `ConflictQueue` | Tracks contested resources requiring human arbitration |
 | `SynthesisEngine` | Admits proposed rules only if all invariants are preserved |
 | `compass` | Scores actions against a terminal goal: does this reduce rights violations? |
@@ -259,32 +382,43 @@ print(result.manipulation_score) # 1.0
 
 ```
 kernel/
-  ├── core verifier          ✓ done
-  ├── ownership graph        ✓ done
-  ├── delegation engine      ✓ done
-  ├── audit model            ✓ done
-  ├── cryptographic signing  ✓ done
-  ├── C ABI                  ✓ done
-  ├── policy IR              — next
-  └── formal verification    — TLA+, Lean
+  ├── core verifier              ✓ done
+  ├── ownership graph            ✓ done
+  ├── delegation engine          ✓ done
+  ├── scope semantics            ✓ done  (Phase 1)
+  ├── IFC non-interference       ✓ done  (Phase 2)
+  ├── Kani harnesses             ✓ done  (Phase 3)
+  ├── plan semantics analysis    ✓ done  (Phase 4)
+  ├── audit log                  ✓ done  (Phase 5)
+  ├── freeze / TOCTOU safety     ✓ done  (Phase 5)
+  ├── cryptographic signing      ✓ done
+  ├── C ABI                      ✓ done
+  ├── policy IR                  — next
+  └── TLA+ / Lean proofs         — planned
 
 runtimes/
-  ├── python                 ✓ done
-  ├── rust                   ✓ done
-  ├── wasm                   — next
-  └── embedded               — planned
+  ├── python                     ✓ done
+  ├── rust                       ✓ done
+  ├── wasm                       — next
+  └── embedded                   — planned
 
 adapters/
-  ├── openai agents          — planned
-  ├── anthropic              — planned
-  ├── langchain              — planned
-  └── autogen                — planned
-
-formal/
-  ├── tla+                   — planned
-  ├── lean                   — planned
-  └── model-checking         — planned
+  ├── openai agents              — planned
+  ├── anthropic                  — planned
+  ├── langchain                  — planned
+  └── autogen                    — planned
 ```
+
+---
+
+## Running tests
+
+```bash
+pip install -e ".[dev]"
+pytest --cov=freedom_theory
+```
+
+CI runs on Ubuntu with Python 3.11 and 3.12 against the compiled Rust backend.
 
 ---
 
@@ -302,6 +436,7 @@ The kernel is **operationally independent** of the book's political, civilizatio
 | Path | Contents |
 |---|---|
 | `THEORY.md` | Condensed formal reference: axioms, Prolog rules, consent logic |
+| `formal/plan_semantics.md` | Tractability boundary for plan verification |
 | `book/theory_of_freedom_full_en.md` | Full English translation |
 | `book/theory_of_freedom_ai_chapters_en.md` | AI chapters (pp. 791–816) |
 
@@ -312,15 +447,6 @@ The kernel is **operationally independent** of the book's political, civilizatio
 RLHF can be jailbroken because the reward model is a learned approximation of human preferences. Constitutional AI can be jailbroken because principles are stated in natural language and subject to reinterpretation. Both treat ethics as a preference-optimization problem — and any optimization target can be gamed.
 
 Freedom Kernel gates on formal, machine-checkable propositions over a typed ownership graph. There is no natural language to reinterpret, no preference to approximate, and no synthesis path that does not first pass the invariant checker.
-
----
-
-## Running tests
-
-```bash
-pip install -e ".[dev]"
-pytest --cov=freedom_theory
-```
 
 ---
 
