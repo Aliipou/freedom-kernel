@@ -43,13 +43,32 @@ Every agent may act only on resources its human owner has explicitly delegated.
 
 This is a formal invariant over a typed ownership graph, not a preference score.
 
-### Current security status
+### Honest current status
 
-**Engineering-grade. Not yet production-grade.**
+**This is a capability policy library today, not a capability kernel.**
 
-The invariants are formally proved (Lean 4 + Kani model checking). The architecture is sound. But kernel-grade trust requires external hostile review by independent cryptographers, formal methods researchers, OS engineers, and security auditors. That review has not happened yet.
+The distinction matters:
 
-Do not use this as a hard security boundary in a production system until external audit is complete. See [`SECURITY.md`](SECURITY.md) for the responsible disclosure policy and audit program.
+| | What this is today | What a capability kernel is |
+|---|---|---|
+| Caller cooperation | Required — callers must invoke `verify()` | Not required — capability IS the access token |
+| Bypass | Trivial — ignore the result or call C directly | Requires compromising the kernel itself |
+| Analogues | A policy library with formal invariants | seL4, Capsicum, CHERI |
+
+The invariants are formally proved. The architecture is sound. The enforcement is not yet mandatory.
+
+**Enforcement layers defined in [`ENFORCEMENT.md`](ENFORCEMENT.md):**
+
+| Layer | Mechanism | Status |
+|---|---|---|
+| L0 | Advisory — caller invokes `verify()` voluntarily | `main` branch |
+| L1 | Python audit hook — mandatory for Python-level file/socket/subprocess access | This branch |
+| L2 | WASM sandbox — mandatory for all agent code, host is trusted | Planned |
+| L3 | OS seccomp + IPC — mandatory at the syscall level | Planned |
+
+Layer 1 is real enforcement — the hook cannot be removed once installed, and Python itself calls it before every `open()`, `socket.connect()`, and `subprocess.Popen()`. It cannot block C extensions calling the OS directly. Layers 2 and 3 close that gap.
+
+See [`THREAT_MODEL.md`](THREAT_MODEL.md) for the full adversary model including the enforcement gap.
 
 ---
 
@@ -57,11 +76,13 @@ Do not use this as a hard security boundary in a production system until externa
 
 | Addition | File | What it documents or fixes |
 |---|---|---|
-| Threat model | [`THREAT_MODEL.md`](THREAT_MODEL.md) | Adversary capabilities, trust boundaries, known gaps |
+| Threat model | [`THREAT_MODEL.md`](THREAT_MODEL.md) | Adversary capabilities, trust boundaries, enforcement gap |
+| Enforcement design | [`ENFORCEMENT.md`](ENFORCEMENT.md) | L0–L3 enforcement layers; policy-library vs capability-kernel distinction |
 | TCB analysis | [`TCB.md`](TCB.md) | Exactly which ~330 lines constitute the TCB; minimization roadmap |
 | Security policy | [`SECURITY.md`](SECURITY.md) | Responsible disclosure, audit scope, what counts as a valid finding |
-| NaN-safe `can_act` | `freedom-kernel/src/engine.rs` | `.unwrap()` on `partial_cmp` replaced with `f64::total_cmp` |
-| Input length guard | `freedom-kernel/src/ffi.rs` | 1 MiB cap on JSON input to C ABI — prevents memory exhaustion |
+| L1 enforcement | `src/freedom_theory/enforcement/hooks.py` | Python audit hook — verifier in mandatory path for file/socket/subprocess |
+| NaN-safe `can_act` | `freedom-kernel/src/engine.rs` | `.unwrap()` on `partial_cmp` replaced with `f64::total_cmp` — no panic on NaN |
+| Input length guard | `freedom-kernel/src/ffi.rs` | 1 MiB cap on C ABI input — prevents memory exhaustion via crafted JSON |
 
 ---
 
@@ -188,7 +209,43 @@ cargo kani --harness prop_forbidden_flags_always_block
 
 ---
 
-## Quick start (`main` branch SDK)
+## L1 enforcement — Python audit hook
+
+```python
+from freedom_theory import (
+    Action, AgentType, Entity, FreedomVerifier,
+    OwnershipRegistry, Resource, ResourceType, RightsClaim,
+)
+from freedom_theory.enforcement import CapabilityEnforcer
+
+alice   = Entity("Alice", AgentType.HUMAN)
+bot     = Entity("Bot",   AgentType.MACHINE)
+allowed = Resource("report.txt", ResourceType.FILE)
+
+registry = OwnershipRegistry()
+registry.register_machine(bot, alice)
+registry.add_claim(RightsClaim(alice, allowed, can_read=True, can_write=True, can_delegate=True))
+registry.add_claim(RightsClaim(bot,   allowed, can_read=True, can_write=True))
+
+verifier = FreedomVerifier(registry)
+
+# Install the enforcer — PERMANENT for this process
+enforcer = CapabilityEnforcer(verifier, agent=bot)
+enforcer.install()
+
+# From this point: open() is gated by the verifier
+open("report.txt", "w")   # OK — bot has write claim
+
+open("secret.txt", "r")   # PermissionError — bot has no claim on secret.txt
+# PermissionError: Kernel blocked file read: secret.txt
+#   READ DENIED on file:secret.txt: bot holds no valid read claim
+```
+
+The hook fires before every `open()`, `subprocess.Popen()`, and `socket.connect()` at the Python layer. It cannot be removed once installed. It cannot block C extensions calling the OS directly (see [`ENFORCEMENT.md`](ENFORCEMENT.md)).
+
+---
+
+## Quick start (advisory mode, `main` branch SDK)
 
 ```python
 from freedom_theory import (
@@ -207,12 +264,10 @@ registry.add_claim(RightsClaim(bot,   report, can_read=True, can_write=True))
 
 verifier = FreedomVerifier(registry)
 
-# Permitted: delegated write
 result = verifier.verify(Action("write-report", bot, resources_write=[report]))
 print(result.summary())
 # [PERMITTED] write-report (confidence=1.00, manipulation=0.00)
 
-# Blocked: sovereignty flag — no argument overrides this
 result = verifier.verify(Action("self-expand", bot, increases_machine_sovereignty=True))
 print(result.summary())
 # [BLOCKED] self-expand
@@ -270,6 +325,7 @@ freedom-kernel/          Rust crate — TCB + bindings
 
 src/freedom_theory/
   kernel/                Python kernel (fallback + dispatch module)
+  enforcement/           L1: Python audit hook — verifier in mandatory path
   extensions/            IFC, manipulation detection, synthesis, compass
   adapters/              OpenAI, Anthropic, LangChain, AutoGen
 
@@ -278,7 +334,8 @@ formal/
   FreedomKernel.lean     Lean 4 mechanically-checked proofs
   plan_semantics.md      Tractability boundary for plan verification
 
-THREAT_MODEL.md          Adversary model, trust boundaries, known gaps
+THREAT_MODEL.md          Adversary model, trust boundaries, enforcement gap
+ENFORCEMENT.md           L0–L3 enforcement layers; policy-library vs kernel distinction
 TCB.md                   TCB analysis and minimization roadmap
 SECURITY.md              Responsible disclosure + audit scope
 ```

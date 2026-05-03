@@ -89,9 +89,29 @@ The attacker (a compromised or misaligned LLM agent) wants to:
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Critical trust assumption
+### Critical trust assumption — the enforcement gap
 
-The kernel's decision is advisory unless the caller is also trusted. A caller that ignores BLOCKED results is not a security system. The kernel provides a **decision**, not enforcement. Enforcement requires the caller to be within the TCB.
+**The kernel provides a decision, not enforcement.**
+
+A caller that ignores BLOCKED results is not a security system. In the current architecture a malicious agent can:
+
+1. Not call `verify()` at all
+2. Call `verify()`, receive BLOCKED, and execute anyway
+3. Import a C extension and call `open()` directly, bypassing the adapter entirely
+4. Use `ctypes` to call `libc` functions with no Python-level interception
+
+This is the fundamental difference between a policy library and a capability kernel. seL4, Capsicum, and CHERI enforce capability discipline at the OS or hardware level — the capability IS the access token; there is no path to the resource that does not require presenting a valid capability.
+
+**Three enforcement layers are defined in [`ENFORCEMENT.md`](ENFORCEMENT.md):**
+
+| Layer | Mechanism | Bypass resistance | Status |
+|---|---|---|---|
+| L0 | Advisory (adapter calls verify) | None | `main` branch |
+| L1 | Python audit hook | Blocks Python-level access; C extensions can bypass | `kernel-grade` branch |
+| L2 | WASM sandbox | Blocks all agent code; host is still trusted | Planned |
+| L3 | OS seccomp + IPC | Blocks all syscalls; kernel process is trusted | Planned |
+
+Until Layer 2 or 3 is built and audited, this is a **capability policy library** with soft enforcement, not a **capability kernel** with mandatory enforcement.
 
 ---
 
