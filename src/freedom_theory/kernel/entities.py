@@ -38,9 +38,23 @@ class Resource:
     rtype: ResourceType
     scope: str = ""
     is_public: bool = False
+    ifc_label: str = field(default="", compare=False, hash=False)
 
     def __str__(self) -> str:
         return f"{self.rtype.value}:{self.name}"
+
+
+def scope_contains(parent_scope: str, child_path: str) -> bool:
+    """
+    Returns True iff child_path falls within parent_scope (prefix matching).
+
+    Formal rule: scope_contains(P, C) iff C == P or C starts with normalize(P) + "/"
+    An empty parent_scope matches everything (root / universal scope).
+    """
+    if not parent_scope:
+        return True
+    normalized = parent_scope.rstrip("/")
+    return child_path == normalized or child_path.startswith(normalized + "/")
 
 
 @dataclass(frozen=True)
