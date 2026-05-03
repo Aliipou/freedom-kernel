@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from freedom_theory.extensions.detection import detect
+from freedom_theory.extensions.ifc import IFCViolation, NonInterferenceChecker, SecurityLattice
 from freedom_theory.extensions.resolver import ConflictQueue
 from freedom_theory.extensions.synthesis import ProposedRule, SynthesisEngine
 from freedom_theory.kernel.registry import OwnershipRegistry
@@ -86,4 +87,7 @@ __all__ = [
     "ProposedRule",
     "SynthesisEngine",
     "ConflictQueue",
+    "IFCViolation",
+    "NonInterferenceChecker",
+    "SecurityLattice",
 ]

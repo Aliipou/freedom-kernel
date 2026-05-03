@@ -150,6 +150,7 @@ fn resource_wire(r: &Resource) -> wire::ResourceWire {
         rtype: r.rtype.val.to_string(),
         scope: r.scope.clone(),
         is_public: r.is_public,
+        ifc_label: r.ifc_label.clone(),
     }
 }
 
@@ -188,6 +189,7 @@ fn registry_wire(inner: &crate::registry::RegistryInner) -> wire::OwnershipRegis
                 rtype: c.resource.rtype.clone(),
                 scope: c.resource.scope.clone(),
                 is_public: c.resource.is_public,
+                ifc_label: String::new(),
             },
             can_read: c.can_read,
             can_write: c.can_write,
@@ -221,13 +223,15 @@ fn wire_to_result(r: crate::wire::VerificationResultWire) -> VerificationResult 
 #[pyclass]
 pub struct FreedomVerifier {
     pub registry: Py<OwnershipRegistry>,
+    pub audit_log: Option<PyObject>,
 }
 
 #[pymethods]
 impl FreedomVerifier {
     #[new]
-    pub fn new(registry: Py<OwnershipRegistry>) -> Self {
-        FreedomVerifier { registry }
+    #[pyo3(signature = (registry, audit_log = None))]
+    pub fn new(registry: Py<OwnershipRegistry>, audit_log: Option<PyObject>) -> Self {
+        FreedomVerifier { registry, audit_log }
     }
 
     #[getter]
@@ -242,8 +246,12 @@ impl FreedomVerifier {
             let inner = reg.inner.lock().unwrap();
             registry_wire(&inner)
         };
-        let r = crate::engine::verify(&reg_w, &action_wire(&action));
-        Ok(wire_to_result(r))
+        let result = wire_to_result(crate::engine::verify(&reg_w, &action_wire(&action)));
+        if let Some(ref log) = self.audit_log {
+            let result_obj = Py::new(py, result.clone())?;
+            log.call_method1(py, "record", (result_obj,))?;
+        }
+        Ok(result)
     }
 
     /// Verify a sequence of actions as a plan.
@@ -308,6 +316,11 @@ impl FreedomVerifier {
         let mut r = crate::engine::verify(&reg_w, &action_wire(&action));
         crate::ffi::attach_signature(&mut r)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
-        Ok(wire_to_result(r))
+        let result = wire_to_result(r);
+        if let Some(ref log) = self.audit_log {
+            let result_obj = Py::new(py, result.clone())?;
+            log.call_method1(py, "record", (result_obj,))?;
+        }
+        Ok(result)
     }
 }

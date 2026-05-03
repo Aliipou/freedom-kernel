@@ -14,6 +14,8 @@ pub struct ResourceWire {
     pub scope: String,
     #[serde(default)]
     pub is_public: bool,
+    #[serde(default)]
+    pub ifc_label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

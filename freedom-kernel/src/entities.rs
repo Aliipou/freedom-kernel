@@ -165,8 +165,11 @@ pub struct Resource {
     pub scope: String,
     #[pyo3(get)]
     pub is_public: bool,
+    #[pyo3(get)]
+    pub ifc_label: String,
 }
 
+// ifc_label is metadata — excluded from PartialEq/Hash (matches Python compare=False, hash=False)
 impl PartialEq for Resource {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
@@ -188,18 +191,20 @@ impl Hash for Resource {
 #[pymethods]
 impl Resource {
     #[new]
-    #[pyo3(signature = (name, rtype, scope = None, is_public = false))]
+    #[pyo3(signature = (name, rtype, scope = None, is_public = false, ifc_label = None))]
     pub fn new(
         name: String,
         rtype: ResourceType,
         scope: Option<String>,
         is_public: bool,
+        ifc_label: Option<String>,
     ) -> Self {
         Resource {
             name,
             rtype,
             scope: scope.unwrap_or_default(),
             is_public,
+            ifc_label: ifc_label.unwrap_or_default(),
         }
     }
 

@@ -88,6 +88,7 @@ impl ConflictRecord {
             crate::entities::ResourceType::from_static(leak_str(&self.inner.resource.rtype)),
             Some(self.inner.resource.scope.clone()),
             self.inner.resource.is_public,
+            None,
         )
     }
 
@@ -141,6 +142,7 @@ pub struct RegistryInner {
     pub machine_owners: HashMap<EntityKey, EntityKey>,
     pub conflicts: Vec<ConflictEntry>,
     pub conflict_hook: Option<PyObject>,
+    pub frozen: bool,
 }
 
 impl RegistryInner {
@@ -150,6 +152,7 @@ impl RegistryInner {
             machine_owners: HashMap::new(),
             conflicts: Vec::new(),
             conflict_hook: None,
+            frozen: false,
         }
     }
 
@@ -238,11 +241,27 @@ impl OwnershipRegistry {
         }
     }
 
+    /// Return an immutable snapshot. Mutations on the snapshot raise RuntimeError.
+    pub fn freeze(&self) -> PyResult<OwnershipRegistry> {
+        let inner = self.inner.lock().unwrap();
+        let mut snapshot = RegistryInner::new();
+        snapshot.claims = inner.claims.clone();
+        snapshot.machine_owners = inner.machine_owners.clone();
+        snapshot.conflicts = inner.conflicts.clone();
+        snapshot.frozen = true;
+        Ok(OwnershipRegistry { inner: Mutex::new(snapshot) })
+    }
+
     pub fn set_conflict_hook(&self, hook: PyObject) {
         self.inner.lock().unwrap().conflict_hook = Some(hook);
     }
 
     pub fn add_claim(&self, py: Python<'_>, claim: PyRef<RightsClaim>) -> PyResult<()> {
+        if self.inner.lock().unwrap().frozen {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Registry is frozen; mutations are not permitted on snapshots."
+            ));
+        }
         let entry = ClaimEntry {
             holder: entity_to_key(&claim.holder),
             resource: resource_to_key(&claim.resource),
@@ -276,6 +295,11 @@ impl OwnershipRegistry {
         machine: PyRef<Entity>,
         owner: PyRef<Entity>,
     ) -> PyResult<()> {
+        if self.inner.lock().unwrap().frozen {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Registry is frozen; mutations are not permitted on snapshots."
+            ));
+        }
         if !machine.is_machine() {
             return Err(pyo3::exceptions::PyTypeError::new_err(format!(
                 "{} is not MACHINE.",
@@ -323,6 +347,11 @@ impl OwnershipRegistry {
         claim: PyRef<RightsClaim>,
         delegated_by: PyRef<Entity>,
     ) -> PyResult<()> {
+        if self.inner.lock().unwrap().frozen {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Registry is frozen; mutations are not permitted on snapshots."
+            ));
+        }
         let delegator_key = entity_to_key(&delegated_by);
         let resource_key = resource_to_key(&claim.resource);
 
