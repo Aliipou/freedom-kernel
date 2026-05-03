@@ -13,8 +13,8 @@
 
 | Branch | Scope | Audience |
 |---|---|---|
-| [`main`](https://github.com/Aliipou/freedom-theory-ai/tree/main) | SDK — integrate the capability gate into agent frameworks | Developers building agent systems |
-| [`kernel-grade`](https://github.com/Aliipou/freedom-theory-ai/tree/kernel-grade) | Hardening path toward a formally audited enforcement primitive | Security researchers, systems engineers |
+| [`main`](https://github.com/Aliipou/freedom-kernel/tree/main) | SDK — integrate the capability gate into agent frameworks | Developers building agent systems |
+| [`kernel-grade`](https://github.com/Aliipou/freedom-kernel/tree/kernel-grade) | Hardening path toward a formally audited enforcement primitive | Security researchers, systems engineers |
 
 ---
 
@@ -87,7 +87,6 @@ Or generate a Docker/OCI seccomp profile:
 
 ```python
 from freedom_theory.enforcement.seccomp import generate_docker_seccomp_profile
-import json
 
 with open("agent_seccomp.json", "w") as f:
     f.write(generate_docker_seccomp_profile())
@@ -102,11 +101,15 @@ with open("agent_seccomp.json", "w") as f:
 |---|---|
 | [`ENFORCEMENT.md`](ENFORCEMENT.md) | Full L0–L3 design; policy-library vs kernel distinction |
 | [`THREAT_MODEL.md`](THREAT_MODEL.md) | Adversary model, trust boundaries, enforcement gap |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | System architecture; paper-level framing; refinement gap |
+| [`PROOFS.md`](PROOFS.md) | What is and is not proved; model vs implementation; refinement gap |
 | [`TCB.md`](TCB.md) | TCB is ~330 lines; minimization roadmap K1–K5 |
 | [`SECURITY.md`](SECURITY.md) | Responsible disclosure, audit scope, valid findings |
 | `enforcement/hooks.py` | L1: Python audit hook |
 | `enforcement/wasm_sandbox.py` | L2: WASM agent runner with verified host functions |
 | `enforcement/seccomp.py` | L3: seccomp profile generator + Docker/OCI profile |
+| `kernel/capability.py` | Capability object model: unforgeable, delegatable, attenuatable, revocable |
+| `tests/test_adversarial.py` | 29-test attack suite covering 9 adversarial categories |
 | `engine.rs` (fix) | `f64::total_cmp` replaces `.unwrap()` — no panic on NaN input |
 | `ffi.rs` (fix) | 1 MiB input cap on C ABI — prevents memory exhaustion |
 
@@ -152,9 +155,9 @@ Four invariants hold by construction:
 
 | Property | How it's enforced |
 |---|---|
-| **Unforgeable** | `_store_secret` is a per-store random token; externally constructed capabilities fail `verify_capability` |
+| **Unforgeable** | `_store_secret` is a per-store random 256-bit token; externally constructed capabilities fail `verify_capability`. `__setattr__` blocks post-construction mutation of `_rights`, `_store_secret`, and `_resource`. |
 | **Delegatable** | `delegate()` creates sub-capabilities from existing ones |
-| **Attenuatable** | `attenuate()` ANDs each right — False AND True = False; amplification is impossible |
+| **Attenuatable** | `attenuate()` ANDs each right — `False AND True = False`; amplification is structurally impossible |
 | **Revocable** | `revoke()` cascades to all children via the parent's `_children` list |
 
 This is the model used by Capsicum (file descriptors), seL4 (CNodes), and CHERI (tagged pointers).
@@ -162,18 +165,18 @@ The key difference from Model A: no registry name lookup — presenting the toke
 
 ### Current relationship between the two models
 
-Model A (verifier) enforces sovereignty flags and delegation chains.
+Model A (verifier) enforces declared-flag blocks and delegation chains.
 Model B (capability store) enforces token unforgeability, attenuation, and revocation.
 
 They are complementary. A complete capability kernel requires both: the verifier prevents
-sovereignty violations even when a valid capability is presented; the capability store ensures
+flag violations even when a valid capability is presented; the capability store ensures
 that access rights cannot be forged or amplified through delegation.
 
 ---
 
-## Sovereignty flags — caller-declared, unconditionally blocked
+## Declared-flag blocks
 
-These flags are checked by `FreedomVerifier`. If any is set, the action is blocked with no exceptions.
+These flags are fields on `Action`. If any is set to `True`, the verifier blocks the action unconditionally — no exceptions, no override.
 
 **Important**: the flags are **caller-declared**, not automatically detected.
 
@@ -182,20 +185,40 @@ Action(deceives=True)   # → BLOCKED
 Action(deceives=False)  # → NOT blocked, even if the action is semantically deceptive
 ```
 
-The kernel enforces declarations. It does not detect whether an action is deceptive, coercive, or sovereignty-increasing in the semantic sense. Semantic detection is a separate problem that requires a learned classifier or a richer formal model of agent intent. This limitation is stated explicitly in `ARCHITECTURE.md`.
+The kernel enforces declarations. It does not detect whether an action is deceptive, coercive, or an authority amplification in the semantic sense. Semantic detection requires a learned classifier or a richer formal model of agent intent — this is a separate problem, stated explicitly in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-| Flag | What is blocked when declared |
+| Flag | Threat class |
 |---|---|
-| `increases_machine_sovereignty` | Machines accumulating authority |
-| `resists_human_correction` | Blocking the human owner's ability to halt or revoke |
-| `bypasses_verifier` | Circumventing the gate |
-| `weakens_verifier` | Degrading enforcement |
-| `disables_corrigibility` | Removing the owner's control |
-| `machine_coalition_dominion` | Collective machine authority over persons |
-| `coerces` | Invalidating consent by force |
-| `deceives` | Invalidating consent by deception |
-| `self_modification_weakens_verifier` | Equivalent to bypass |
-| `machine_coalition_reduces_freedom` | Coordinated reduction of human freedom |
+| `increases_machine_sovereignty` | Authority amplification |
+| `resists_human_correction` | Correction resistance |
+| `bypasses_verifier` | Mandatory mediation bypass |
+| `weakens_verifier` | Enforcement degradation |
+| `disables_corrigibility` | Control surface removal |
+| `machine_coalition_dominion` | Collective authority escalation |
+| `coerces` | Consent invalidation by force |
+| `deceives` | Consent invalidation by deception |
+| `self_modification_weakens_verifier` | Enforcement self-bypass |
+| `machine_coalition_reduces_freedom` | Coordinated confinement violation |
+
+---
+
+## Adversarial test suite
+
+`tests/test_adversarial.py` attacks the system from nine angles (29 tests, all passing):
+
+| Category | What it tests |
+|---|---|
+| **Capability forgery** | Hand-crafted secrets, brute force, pickle roundtrip, deepcopy, slot mutation |
+| **Authority amplification** | Delegation without rights, multi-hop escalation, scratch construction |
+| **Confused deputy** | Bot presenting alice's identity, adapter elevation attempts |
+| **TOCTOU** | Live registry gap, `freeze()` defense, revocation immediacy |
+| **Revocation races** | Concurrent `revoke()` + `verify_capability()`, concurrent `revoke()` + `delegate()` |
+| **Replay attacks** | No-nonce gap documented, audit log replay detection |
+| **Serialization attacks** | Unknown `Action` kwargs, zero-confidence claims, expired claims |
+| **Monkey patching** | Python-layer verifier bypass (documented limitation), L1 hook independence |
+| **Privilege escalation** | All 10 flags individually, flag + valid claim, ownerless machine + claim |
+
+**A real bug was found**: `Capability.__slots__` does not prevent post-construction assignment by default. An attacker could do `cap._rights = Rights(can_read=True, can_write=True)` to amplify rights. Fixed by overriding `__setattr__` to raise `AttributeError` on immutable slots after `__init__` completes.
 
 ---
 
@@ -256,12 +279,18 @@ freedom-kernel/src/
 
 src/freedom_theory/
   kernel/         dispatch module (Rust → Python fallback)
+    capability.py capability object model (unforgeable, delegatable, attenuatable, revocable)
   enforcement/
     hooks.py      L1: Python audit hook
     wasm_sandbox.py  L2: WASM agent runner
     seccomp.py    L3: seccomp filter + Docker profile
   extensions/     IFC, detection, synthesis, compass
   adapters/       OpenAI, Anthropic, LangChain, AutoGen
+
+tests/
+  test_adversarial.py  29-test attack suite (9 adversarial categories)
+  test_capability.py   18 tests: four capability invariants
+  test_enforcement.py  L1/L2/L3 enforcement tests
 
 formal/
   freedom_kernel.tla   TLA+ specification
@@ -302,8 +331,10 @@ The project needs adversarial review from people motivated to break it:
 
 - **Cryptographers** — can `crypto.rs` be attacked? Key reuse, replay, forgery?
 - **Formal methods** — are the Lean proofs proving what they claim to prove?
-- **Systems engineers** — panic paths, race conditions, unsafe assumptions?
-- **Security auditors** — can you construct an `ActionWire` that bypasses a sovereignty flag?
+- **Systems engineers** — panic paths, race conditions, unsafe assumptions in `engine.rs`?
+- **Security auditors** — can you construct an `ActionWire` that bypasses a declared flag? Can you amplify a capability's rights?
+
+The adversarial test suite (`tests/test_adversarial.py`) documents known attack surfaces and their current mitigations. It is a starting point for external review, not a substitute for it.
 
 Findings are publicly credited. See [`SECURITY.md`](SECURITY.md).
 
