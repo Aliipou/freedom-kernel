@@ -393,20 +393,20 @@ kernel/
   ├── freeze / TOCTOU safety     ✓ done  (Phase 5)
   ├── cryptographic signing      ✓ done
   ├── C ABI                      ✓ done
-  ├── policy IR                  — next
-  └── TLA+ / Lean proofs         — planned
+  ├── policy IR (ABAC layer)     ✓ done
+  └── TLA+ / Lean 4 proofs       ✓ done  (research-grade; TLC + Lean 4)
 
 runtimes/
   ├── python                     ✓ done
   ├── rust                       ✓ done
-  ├── wasm                       — next
-  └── embedded                   — planned
+  ├── wasm                       ✓ done  (wasm-bindgen bindings, feature-gated)
+  └── embedded / no-std          ✓ done  (no_std + alloc feature flag)
 
 adapters/
-  ├── openai agents              — planned
-  ├── anthropic                  — planned
-  ├── langchain                  — planned
-  └── autogen                    — planned
+  ├── openai agents              ✓ done
+  ├── anthropic                  ✓ done
+  ├── langchain                  ✓ done
+  └── autogen                    ✓ done
 ```
 
 ---
