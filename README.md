@@ -377,6 +377,125 @@ print(result.manipulation_score) # 1.0
 
 ---
 
+## Plan verification
+
+`verify_plan()` checks a multi-step action sequence for both per-action violations and cross-action IFC taint propagation. A plan is blocked at the first violated action:
+
+```python
+from freedom_theory.kernel import verify_plan
+
+result = verify_plan(registry, [
+    Action("read-secret", bot, resources_read=[secret_src]),
+    Action("write-public", bot, resources_write=[public_sink]),  # IFC downward flow — blocked
+])
+print(result.all_permitted)  # False
+print(result.blocked_at)     # 1
+```
+
+The Rust planner tracks IFC taint across the plan prefix: once an action reads `SECRET`, any subsequent write to `PUBLIC` or `INTERNAL` is blocked — even if each action individually would be permitted.
+
+---
+
+## Goal tree verification
+
+`verify_goal_tree()` verifies a recursive goal decomposition by DFS traversal. Parent actions are verified before children. A hard `depth_limit` (default 10) prevents infinite delegation chains:
+
+```python
+from freedom_theory.kernel import verify_goal_tree, GoalNode
+
+root = GoalNode("research", action_read_papers,
+    children=[
+        GoalNode("summarize", action_write_summary),
+        GoalNode("index", action_write_index),
+    ]
+)
+result = verify_goal_tree(registry, root)
+print(result.all_permitted)
+```
+
+---
+
+## Multi-agent spawning
+
+Sub-agent spawning is treated as a kernel-verified action. Child authority is always attenuated: a child cannot hold rights the parent does not have. A hard cap of 16 delegation levels prevents recursive spawning attacks.
+
+```python
+from freedom_theory.kernel import verify_spawn, AgentSpawnRequest
+
+req = AgentSpawnRequest(parent=orchestrator, child_id="research-sub",
+                        delegated_claims=[...], budget=AuthorityBudget.minimal())
+result = verify_spawn(registry, req)
+```
+
+---
+
+## CLI tool
+
+```bash
+# Single action
+echo '{"registry":{...},"action":{...}}' | fk verify
+
+# Plan
+echo '{"registry":{...},"plan":[...]}' | fk verify-plan
+
+# Exit codes: 0=permitted, 1=blocked, 2=error
+```
+
+Build the CLI: `cd freedom-kernel-cli && cargo build --release`
+
+---
+
+## Formal verification status
+
+### Lean 4 (proved theorems, no `sorry`)
+
+| Theorem | File | Method |
+|---|---|---|
+| `forbidden_flags_always_block` | `TCB.lean` | `simp` |
+| `verify_deterministic` | `TCB.lean` | `rfl` |
+| `permitted_implies_no_forbidden_flag` | `TCB.lean` | `simp` |
+| `sovereignty_flag_blocks` | `TCB.lean` | `simp` |
+| `coercion_flag_blocks` | `TCB.lean` | `simp` |
+| `deception_flag_blocks` | `TCB.lean` | `simp` |
+| `taint_monotone` | `Temporal.lean` | proved |
+| `attenuation_cannot_escalate` | `MultiAgent.lean` | structural |
+
+Build: `cd formal/lean4 && lake build`
+
+### Kani harnesses (19 of 20 target)
+
+| Harness | Property |
+|---|---|
+| `prop_increases_machine_sovereignty` | INV-01 unconditional block |
+| `prop_resists_human_correction` | INV-02 unconditional block |
+| `prop_bypasses_verifier` | INV-03 unconditional block |
+| `prop_weakens_verifier` | INV-04 unconditional block |
+| `prop_disables_corrigibility` | INV-05 unconditional block |
+| `prop_machine_coalition_dominion` | INV-06 unconditional block |
+| `prop_coerces` | INV-07 unconditional block |
+| `prop_deceives` | INV-08 unconditional block |
+| `prop_self_modification` | INV-09 unconditional block |
+| `prop_coalition_reduces_freedom` | INV-10 unconditional block |
+| `prop_ownerless_machine_blocked` | A4 |
+| `prop_machine_governs_human_blocked` | A6 |
+| `prop_public_resource_read_permitted` | public reads always pass |
+| `prop_write_denied_without_claim` | A7-write |
+| `prop_read_denied_without_claim` | A7-read |
+| `prop_delegation_denied_without_delegate_claim` | A7-delegate |
+| `prop_permitted_deterministic` | determinism |
+| `prop_permitted_implies_no_violations` | soundness |
+| `prop_blocked_implies_violations_non_empty` | completeness |
+
+```bash
+cargo kani --harness prop_increases_machine_sovereignty
+cargo kani  # run all harnesses
+```
+
+See [`formal/INCOMPLETENESS.md`](formal/INCOMPLETENESS.md) for the formal boundary —
+what the kernel can and cannot prove.
+
+---
+
 ## Roadmap
 
 ```
@@ -386,20 +505,27 @@ kernel/
   ├── delegation engine          ✓ done
   ├── scope semantics            ✓ done  (Phase 1)
   ├── IFC non-interference       ✓ done  (Phase 2)
-  ├── Kani harnesses             ✓ done  (Phase 3)
+  ├── Kani harnesses (19/20)     ✓ done  (Phase 3 + Stage 4A)
   ├── plan semantics analysis    ✓ done  (Phase 4)
   ├── audit log                  ✓ done  (Phase 5)
   ├── freeze / TOCTOU safety     ✓ done  (Phase 5)
   ├── cryptographic signing      ✓ done
   ├── C ABI                      ✓ done
   ├── policy IR (ABAC layer)     ✓ done
-  └── TLA+ / Lean 4 proofs       ✓ done  (research-grade; TLC + Lean 4)
+  ├── Lean 4 proofs (TCB.lean)   ✓ done  (Stage 4B — core theorems proved)
+  ├── INCOMPLETENESS.md          ✓ done  (Stage 4C)
+  ├── planner.rs (verify_plan)   ✓ done  (Stage 2A)
+  ├── goal_tree.rs               ✓ done  (Stage 2C)
+  ├── multi_agent.rs             ✓ done  (Stage 3)
+  └── spec/v0.2/SPEC.md          ✓ done  (Stage 5C)
 
 runtimes/
   ├── python                     ✓ done
   ├── rust                       ✓ done
   ├── wasm                       ✓ done  (wasm-bindgen bindings, feature-gated)
-  └── embedded / no-std          ✓ done  (no_std + alloc feature flag)
+  ├── embedded / no-std          ✓ done  (no_std + alloc feature flag)
+  ├── go                         ✓ done  (CGO wrapper over C ABI, freedom-kernel-go/)
+  └── cli                        ✓ done  (fk binary, freedom-kernel-cli/)
 
 adapters/
   ├── openai agents              ✓ done

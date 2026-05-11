@@ -2,8 +2,11 @@ mod crypto;
 pub(crate) mod engine;
 pub mod entities;
 pub mod ffi;
+pub mod goal_tree;
 #[cfg(kani)]
 mod kani_proofs;
+pub mod multi_agent;
+pub mod planner;
 pub mod registry;
 pub mod verifier;
 #[cfg(feature = "wasm")]
