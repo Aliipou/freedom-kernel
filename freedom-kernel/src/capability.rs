@@ -1,7 +1,23 @@
-//! Capability algebra — the closed vocabulary of authority operations.
+//! Capability algebra — the closed, finite vocabulary of authority operations.
 //!
-//! Golden rule: if it requires interpretation, it is NOT TCB.
-//! All types here are pure enums with no I/O, no heap allocation, no interpretation.
+//! # Hard constraints (enforced by CI)
+//!
+//! This file must stay:
+//! - **Finite** — all variants are enumerated at compile time; no open extension points
+//! - **Closed** — exhaustive enums only; no trait objects, no dynamic dispatch
+//! - **Algebraic** — pure data (enums + Copy); no logic, no state, no side effects
+//! - **Self-contained** — zero project imports (`use crate::` is forbidden here)
+//! - **Small** — hard ceiling of 150 LOC (CI-enforced)
+//!
+//! # What this file must never become
+//!
+//! - A policy DSL (no evaluation, no rule matching)
+//! - A semantic interpreter (no string analysis, no NLP, no heuristics)
+//! - A contextual reasoner (no runtime state, no environment queries)
+//! - A plugin system (no trait impls for external types, no open variants)
+//!
+//! The only permitted impls are `Display` and boundary-only `from_str` for `Operation`.
+//! Every other behavior belongs outside this file.
 
 /// The exhaustive set of capability kinds this kernel recognizes.
 ///
