@@ -82,14 +82,26 @@ BLOCKED   → halt    → surface violations to human owner
 **Trusted Computing Base:** `engine.rs` (203 LOC), `capability.rs`, `wire.rs`, `crypto.rs`.
 Everything else — adapters, extensions, scheduler, IPC — is outside the TCB.
 
-The TCB boundary is mechanically enforced by CI on every commit:
+The TCB boundary is mechanically enforced by CI on every commit.
+
+**`engine.rs` guards** (4 checks):
 
 | Guard | Rule |
 |---|---|
-| LOC ceiling | `engine.rs` must stay ≤ 300 lines |
-| Public API | `engine.rs` exports exactly one function: `verify` |
-| Import scope | `engine.rs` may only import from `crate::capability` and `crate::wire` |
-| Purity | `engine.rs` must contain no randomness, network, or filesystem calls |
+| LOC ceiling | Must stay ≤ 300 lines |
+| Public API | Exports exactly one function: `verify` |
+| Import scope | May only import from `crate::capability` and `crate::wire` |
+| Purity | Must contain no randomness, network, or filesystem calls |
+
+**`capability.rs` guards** (3 checks):
+
+| Guard | Rule |
+|---|---|
+| LOC ceiling | Must stay ≤ 150 lines — capability vocabulary must stay finite |
+| Self-contained | No `use crate::` imports — zero project dependencies |
+| Enums only | No struct definitions — structs carry state and open extension points |
+
+`capability.rs` is the most dangerous long-term pressure point: every new requirement will tempt someone to add policy logic, state, or interpretation to it. The 150-line ceiling and enum-only constraint make TCB inflation visible and loud before it compounds.
 
 Any PR touching TCB files must pass a [TCB Gate checklist](.github/pull_request_template.md) — including a written answer to: *"Can this exist outside `engine.rs`?"*
 
@@ -360,7 +372,7 @@ Before opening a PR, answer one question:
 
 > **Can this feature exist entirely outside `engine.rs`?**
 
-If yes — it does not belong in the TCB. Extensions, adapters, and new modules are welcome. Changes that expand `engine.rs` require a written justification and must pass four CI guards.
+If yes — it does not belong in the TCB. Extensions, adapters, and new modules are welcome. Changes that touch TCB files require a written justification and must pass seven CI guards (four on `engine.rs`, three on `capability.rs`).
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full rules and [`TCB.md`](TCB.md) for the boundary definition.
 
