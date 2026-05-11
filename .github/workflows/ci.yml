@@ -30,12 +30,33 @@ jobs:
         with:
           workspaces: freedom-kernel
 
-      - name: TCB LOC guard — engine.rs must stay under 500 lines
+      - name: TCB LOC guard — engine.rs must stay under 300 lines
         run: |
           loc=$(wc -l < src/engine.rs)
           echo "engine.rs: ${loc} lines"
-          if [ "$loc" -gt 500 ]; then
-            echo "ERROR: engine.rs exceeds 500 LOC (TCB inflation). Current: ${loc}"
+          if [ "$loc" -gt 300 ]; then
+            echo "ERROR: engine.rs exceeds 300 LOC (TCB inflation). Current: ${loc}"
+            echo "If this is a legitimate TCB change, update the limit with justification."
+            exit 1
+          fi
+
+      - name: TCB API guard — engine.rs must export exactly one public function
+        run: |
+          pub_fns=$(grep -c '^pub fn ' src/engine.rs || true)
+          echo "engine.rs public functions: ${pub_fns}"
+          if [ "$pub_fns" -gt 1 ]; then
+            echo "ERROR: engine.rs has ${pub_fns} public functions (must be 1: verify)."
+            echo "New public API in engine.rs expands the TCB surface. Move to a separate module."
+            exit 1
+          fi
+
+      - name: TCB import guard — engine.rs may only import from capability and wire
+        run: |
+          bad_imports=$(grep '^use crate::' src/engine.rs | grep -v 'crate::capability\|crate::wire' || true)
+          if [ -n "$bad_imports" ]; then
+            echo "ERROR: engine.rs imports from outside capability/wire:"
+            echo "$bad_imports"
+            echo "TCB must not depend on modules outside its defined boundary."
             exit 1
           fi
 
