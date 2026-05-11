@@ -201,11 +201,11 @@ impl RegistryInner {
                 ),
             );
         }
-        let best = candidates
+        let best_conf = candidates
             .iter()
-            .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap())
-            .unwrap();
-        (true, best.confidence, format!("claim confidence={:.2}", best.confidence))
+            .map(|c| c.confidence)
+            .fold(f64::NEG_INFINITY, f64::max);
+        (true, best_conf, format!("claim confidence={:.2}", best_conf))
     }
 }
 
@@ -243,7 +243,8 @@ impl OwnershipRegistry {
 
     /// Return an immutable snapshot. Mutations on the snapshot raise RuntimeError.
     pub fn freeze(&self) -> PyResult<OwnershipRegistry> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock()
+            .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("kernel lock poisoned"))?;
         let mut snapshot = RegistryInner::new();
         snapshot.claims = inner.claims.clone();
         snapshot.machine_owners = inner.machine_owners.clone();
@@ -257,7 +258,7 @@ impl OwnershipRegistry {
     }
 
     pub fn add_claim(&self, py: Python<'_>, claim: PyRef<RightsClaim>) -> PyResult<()> {
-        if self.inner.lock().unwrap().frozen {
+        if self.inner.lock().map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("kernel lock poisoned"))?.frozen {
             return Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "Registry is frozen; mutations are not permitted on snapshots."
             ));
@@ -273,7 +274,8 @@ impl OwnershipRegistry {
         };
 
         let (conflict, hook) = {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock()
+                .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("kernel lock poisoned"))?;
             let conflict = inner.detect_conflict(&entry);
             if let Some(ref c) = conflict {
                 inner.conflicts.push(c.clone());
@@ -295,7 +297,8 @@ impl OwnershipRegistry {
         machine: PyRef<Entity>,
         owner: PyRef<Entity>,
     ) -> PyResult<()> {
-        if self.inner.lock().unwrap().frozen {
+        if self.inner.lock()
+            .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("kernel lock poisoned"))?.frozen {
             return Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "Registry is frozen; mutations are not permitted on snapshots."
             ));
@@ -314,7 +317,9 @@ impl OwnershipRegistry {
         }
         let mk = entity_to_key(&machine);
         let ok = entity_to_key(&owner);
-        self.inner.lock().unwrap().machine_owners.insert(mk, ok);
+        self.inner.lock()
+            .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("kernel lock poisoned"))?
+            .machine_owners.insert(mk, ok);
         Ok(())
     }
 
@@ -356,7 +361,8 @@ impl OwnershipRegistry {
         let resource_key = resource_to_key(&claim.resource);
 
         let (best_read, best_write, best_delegate, best_conf) = {
-            let inner = self.inner.lock().unwrap();
+            let inner = self.inner.lock()
+                .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("kernel lock poisoned"))?;
             let candidates: Vec<&ClaimEntry> = inner
                 .claims
                 .iter()
@@ -379,11 +385,20 @@ impl OwnershipRegistry {
                 )));
             }
 
-            let best = candidates
-                .iter()
-                .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap())
-                .unwrap();
-            (best.can_read, best.can_write, best.can_delegate, best.confidence)
+            // fold avoids unwrap on partial_cmp (NaN safety) and on Option from max_by.
+            let mut best_r = false;
+            let mut best_w = false;
+            let mut best_d = false;
+            let mut best_c = f64::NEG_INFINITY;
+            for c in &candidates {
+                if c.confidence > best_c {
+                    best_c = c.confidence;
+                    best_r = c.can_read;
+                    best_w = c.can_write;
+                    best_d = c.can_delegate;
+                }
+            }
+            (best_r, best_w, best_d, best_c)
         };
 
         if claim.can_read && !best_read {
@@ -417,7 +432,8 @@ impl OwnershipRegistry {
     }
 
     pub fn open_conflicts(&self, py: Python<'_>) -> PyResult<Vec<PyObject>> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock()
+            .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("kernel lock poisoned"))?;
         let mut result = Vec::new();
         for entry in &inner.conflicts {
             let record = ConflictRecord { inner: entry.clone() };

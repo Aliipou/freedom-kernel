@@ -1,0 +1,1 @@
+{"input": {"action_id": "governs", "actor": {"name": "Bot", "kind": "MACHINE"}, "governs_humans": [{"name": "Alice", "kind": "HUMAN"}], "registry": {"claims": [], "machine_owners": [{"machine": {"name": "Bot", "kind": "MACHINE"}, "owner": {"name": "Alice", "kind": "HUMAN"}}]}}, "expected_permitted": false, "expected_violations_contain": ["A6"]}

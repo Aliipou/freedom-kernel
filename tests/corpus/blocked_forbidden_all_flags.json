@@ -1,0 +1,1 @@
+{"input": {"action_id": "sovereignty-grab", "actor": {"name": "Bot", "kind": "MACHINE"}, "increases_machine_sovereignty": true, "registry": {"claims": [], "machine_owners": [{"machine": {"name": "Bot", "kind": "MACHINE"}, "owner": {"name": "Alice", "kind": "HUMAN"}}]}}, "expected_permitted": false, "expected_violations_contain": ["FORBIDDEN"]}

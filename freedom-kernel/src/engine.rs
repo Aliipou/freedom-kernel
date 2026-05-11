@@ -4,6 +4,11 @@
 //! `embedded` feature: enables `#[no_std] + alloc`. Expiry checks are
 //! disabled (no system clock); use `expires_at = None` on all claims, or
 //! gate expiry externally via the C ABI before calling `verify`.
+#![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
+#![deny(clippy::indexing_slicing)]
+#![deny(clippy::panic)]
 #![cfg_attr(feature = "embedded", no_std)]
 #[cfg(feature = "embedded")]
 extern crate alloc;
@@ -71,11 +76,12 @@ fn can_act(
             ),
         );
     }
-    let best = candidates
+    // Fold is used instead of max_by to avoid unwrap on partial_cmp (NaN safety).
+    let best_conf = candidates
         .iter()
-        .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap())
-        .unwrap();
-    (true, best.confidence, format!("claim confidence={:.2}", best.confidence))
+        .map(|c| c.confidence)
+        .fold(f64::NEG_INFINITY, f64::max);
+    (true, best_conf, format!("claim confidence={:.2}", best_conf))
 }
 
 pub fn verify(registry: &OwnershipRegistryWire, action: &ActionWire) -> VerificationResultWire {

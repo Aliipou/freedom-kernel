@@ -88,12 +88,21 @@ pub struct VerificationResultWire {
     pub confidence: f64,
     pub requires_human_arbitration: bool,
     pub manipulation_score: f64,
-    /// ed25519 signature (hex) over the canonical JSON of this result (sig/vk excluded)
+    /// ed25519 signature (hex) over canonical bytes of this result
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
     /// ed25519 verifying key (hex) of the signing kernel instance
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signing_key: Option<String>,
+    /// Versioned key identifier (e.g. "fk-2025-001") for audit trail
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
+    /// Unix timestamp (seconds) at signing — for replay-window checks
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<u64>,
+    /// 16-byte random nonce (hex) — prevent replay within the timestamp window
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
 }
 
 /// Combined input envelope for the C FFI and `verify_json` Python function

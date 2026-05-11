@@ -113,6 +113,12 @@ pub struct VerificationResult {
     #[pyo3(get)] pub signature: Option<String>,
     /// ed25519 verifying key hex of this kernel instance
     #[pyo3(get)] pub signing_key: Option<String>,
+    /// Versioned key identifier (e.g. "fk-2025-001") for audit trail
+    #[pyo3(get)] pub key_id: Option<String>,
+    /// Unix timestamp (seconds) at signing — for replay-window checks
+    #[pyo3(get)] pub timestamp: Option<u64>,
+    /// 16-byte random nonce (hex) — prevent replay within the timestamp window
+    #[pyo3(get)] pub nonce: Option<String>,
 }
 
 #[pymethods]
@@ -215,6 +221,9 @@ fn wire_to_result(r: crate::wire::VerificationResultWire) -> VerificationResult 
         manipulation_score: r.manipulation_score,
         signature: r.signature,
         signing_key: r.signing_key,
+        key_id: r.key_id,
+        timestamp: r.timestamp,
+        nonce: r.nonce,
     }
 }
 
@@ -243,7 +252,8 @@ impl FreedomVerifier {
     pub fn verify(&self, py: Python<'_>, action: PyRef<Action>) -> PyResult<VerificationResult> {
         let reg_w = {
             let reg = self.registry.borrow(py);
-            let inner = reg.inner.lock().unwrap();
+            let inner = reg.inner.lock()
+                .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("kernel lock poisoned"))?;
             registry_wire(&inner)
         };
         let result = wire_to_result(crate::engine::verify(&reg_w, &action_wire(&action)));
@@ -266,7 +276,8 @@ impl FreedomVerifier {
     ) -> PyResult<Vec<VerificationResult>> {
         let reg_w = {
             let reg = self.registry.borrow(py);
-            let inner = reg.inner.lock().unwrap();
+            let inner = reg.inner.lock()
+                .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("kernel lock poisoned"))?;
             registry_wire(&inner)
         };
 
@@ -294,6 +305,9 @@ impl FreedomVerifier {
                         manipulation_score: 0.0,
                         signature: None,
                         signing_key: None,
+                        key_id: None,
+                        timestamp: None,
+                        nonce: None,
                     });
                 }
                 return Ok(results);
@@ -310,7 +324,8 @@ impl FreedomVerifier {
     ) -> PyResult<VerificationResult> {
         let reg_w = {
             let reg = self.registry.borrow(py);
-            let inner = reg.inner.lock().unwrap();
+            let inner = reg.inner.lock()
+                .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("kernel lock poisoned"))?;
             registry_wire(&inner)
         };
         let mut r = crate::engine::verify(&reg_w, &action_wire(&action));

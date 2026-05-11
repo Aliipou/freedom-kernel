@@ -24,10 +24,20 @@ wasm     = ["dep:wasm-bindgen"]
 embedded = []
 
 [dependencies]
-pyo3          = { version = "0.22", features = ["extension-module"] }
-serde         = { version = "1",    features = ["derive"] }
-serde_json    = "1"
-ed25519-dalek = { version = "2", features = ["rand_core"] }
-rand_core     = { version = "0.6",  features = ["getrandom"] }
-hex           = "0.4"
-wasm-bindgen  = { version = "0.2", optional = true }
+pyo3               = { version = "0.22", features = ["extension-module"] }
+serde              = { version = "1",    features = ["derive"] }
+serde_json         = "1"
+ed25519-dalek      = { version = "2", features = ["rand_core"] }
+rand_core          = { version = "0.6",  features = ["getrandom"] }
+hex                = "0.4"
+subtle             = "2"
+zeroize            = { version = "1", features = ["derive"] }
+wasm-bindgen       = { version = "0.2", optional = true }
+
+[profile.release]
+opt-level        = 3
+lto              = true
+codegen-units    = 1
+strip            = "symbols"
+panic            = "abort"
+overflow-checks  = true

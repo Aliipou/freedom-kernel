@@ -8,7 +8,6 @@ mod proofs {
     use crate::engine;
     use crate::wire::{
         ActionWire, ClaimWire, EntityWire, MachineOwnerWire, OwnershipRegistryWire, ResourceWire,
-        VerificationResultWire,
     };
 
     // ── helpers ───────────────────────────────────────────────────────────────
@@ -43,27 +42,19 @@ mod proofs {
         }
     }
 
-    // ── Property 1: FORBIDDEN flags always block ──────────────────────────────
-
-    #[kani::proof]
-    fn prop_forbidden_flags_always_block() {
-        let increases_sovereignty: bool = kani::any();
-        let resists_correction: bool = kani::any();
-        let bypasses: bool = kani::any();
-
-        // at least one flag is set
-        kani::assume(increases_sovereignty || resists_correction || bypasses);
-
-        let registry = OwnershipRegistryWire {
+    fn minimal_registry_with_owner() -> OwnershipRegistryWire {
+        OwnershipRegistryWire {
             claims: vec![],
             machine_owners: vec![MachineOwnerWire {
                 machine: machine("bot"),
                 owner: human("alice"),
             }],
-        };
+        }
+    }
 
-        let action = ActionWire {
-            action_id: "forbidden_test".to_string(),
+    fn base_action() -> ActionWire {
+        ActionWire {
+            action_id: "test".to_string(),
             actor: machine("bot"),
             description: String::new(),
             resources_read: vec![],
@@ -71,9 +62,9 @@ mod proofs {
             resources_delegate: vec![],
             governs_humans: vec![],
             argument: String::new(),
-            increases_machine_sovereignty: increases_sovereignty,
-            resists_human_correction: resists_correction,
-            bypasses_verifier: bypasses,
+            increases_machine_sovereignty: false,
+            resists_human_correction: false,
+            bypasses_verifier: false,
             weakens_verifier: false,
             disables_corrigibility: false,
             machine_coalition_dominion: false,
@@ -81,13 +72,43 @@ mod proofs {
             deceives: false,
             self_modification_weakens_verifier: false,
             machine_coalition_reduces_freedom: false,
-        };
-
-        let result = engine::verify(&registry, &action);
-        assert!(!result.permitted, "FORBIDDEN flags must always block");
+        }
     }
 
-    // ── Property 2: Ownerless machine is blocked ──────────────────────────────
+    // ── Macro: one harness per flag ───────────────────────────────────────────
+    //
+    // Each harness proves: setting flag X = true always blocks, regardless of
+    // all other action fields. This gives us 10 independent formal proofs.
+
+    macro_rules! forbidden_flag_harness {
+        ($name:ident, $field:ident) => {
+            #[kani::proof]
+            fn $name() {
+                let registry = minimal_registry_with_owner();
+                let mut action = base_action();
+                action.$field = true;
+                let result = engine::verify(&registry, &action);
+                kani::assert!(!result.permitted, stringify!($field must always block));
+                kani::assert!(
+                    result.violations.iter().any(|v| v.contains("FORBIDDEN")),
+                    "violation list must contain FORBIDDEN"
+                );
+            }
+        };
+    }
+
+    forbidden_flag_harness!(prop_increases_machine_sovereignty, increases_machine_sovereignty);
+    forbidden_flag_harness!(prop_resists_human_correction,      resists_human_correction);
+    forbidden_flag_harness!(prop_bypasses_verifier,             bypasses_verifier);
+    forbidden_flag_harness!(prop_weakens_verifier,              weakens_verifier);
+    forbidden_flag_harness!(prop_disables_corrigibility,        disables_corrigibility);
+    forbidden_flag_harness!(prop_machine_coalition_dominion,    machine_coalition_dominion);
+    forbidden_flag_harness!(prop_coerces,                       coerces);
+    forbidden_flag_harness!(prop_deceives,                      deceives);
+    forbidden_flag_harness!(prop_self_modification,             self_modification_weakens_verifier);
+    forbidden_flag_harness!(prop_coalition_reduces_freedom,     machine_coalition_reduces_freedom);
+
+    // ── Property: Ownerless machine is always blocked ─────────────────────────
 
     #[kani::proof]
     fn prop_ownerless_machine_blocked() {
@@ -95,72 +116,25 @@ mod proofs {
             claims: vec![],
             machine_owners: vec![], // no owner registered
         };
-
-        let action = ActionWire {
-            action_id: "no_owner".to_string(),
-            actor: machine("orphan"),
-            description: String::new(),
-            resources_read: vec![],
-            resources_write: vec![],
-            resources_delegate: vec![],
-            governs_humans: vec![],
-            argument: String::new(),
-            increases_machine_sovereignty: false,
-            resists_human_correction: false,
-            bypasses_verifier: false,
-            weakens_verifier: false,
-            disables_corrigibility: false,
-            machine_coalition_dominion: false,
-            coerces: false,
-            deceives: false,
-            self_modification_weakens_verifier: false,
-            machine_coalition_reduces_freedom: false,
-        };
-
+        let action = ActionWire { action_id: "no_owner".to_string(), actor: machine("orphan"), ..base_action() };
         let result = engine::verify(&registry, &action);
-        assert!(!result.permitted, "Ownerless machine must be blocked (A4)");
-        assert!(result.violations.iter().any(|v| v.contains("A4")));
+        kani::assert!(!result.permitted, "Ownerless machine must be blocked (A4)");
+        kani::assert!(result.violations.iter().any(|v| v.contains("A4")));
     }
 
-    // ── Property 3: A machine governing a human is always blocked ─────────────
+    // ── Property: A machine governing a human is always blocked ───────────────
 
     #[kani::proof]
     fn prop_machine_governs_human_blocked() {
-        let registry = OwnershipRegistryWire {
-            claims: vec![],
-            machine_owners: vec![MachineOwnerWire {
-                machine: machine("bot"),
-                owner: human("alice"),
-            }],
-        };
-
-        let action = ActionWire {
-            action_id: "governs_test".to_string(),
-            actor: machine("bot"),
-            description: String::new(),
-            resources_read: vec![],
-            resources_write: vec![],
-            resources_delegate: vec![],
-            governs_humans: vec![human("bob")], // machine tries to govern human
-            argument: String::new(),
-            increases_machine_sovereignty: false,
-            resists_human_correction: false,
-            bypasses_verifier: false,
-            weakens_verifier: false,
-            disables_corrigibility: false,
-            machine_coalition_dominion: false,
-            coerces: false,
-            deceives: false,
-            self_modification_weakens_verifier: false,
-            machine_coalition_reduces_freedom: false,
-        };
-
+        let registry = minimal_registry_with_owner();
+        let mut action = base_action();
+        action.governs_humans = vec![human("bob")];
         let result = engine::verify(&registry, &action);
-        assert!(!result.permitted, "Machine governing human must be blocked (A6)");
-        assert!(result.violations.iter().any(|v| v.contains("A6")));
+        kani::assert!(!result.permitted, "Machine governing human must be blocked (A6)");
+        kani::assert!(result.violations.iter().any(|v| v.contains("A6")));
     }
 
-    // ── Property 4: Public resource read always permitted ────────────────────
+    // ── Property: Public resource read always permitted ───────────────────────
 
     #[kani::proof]
     fn prop_public_resource_read_permitted() {
@@ -171,41 +145,14 @@ mod proofs {
             is_public: true,
             ifc_label: String::new(),
         };
-
-        let registry = OwnershipRegistryWire {
-            claims: vec![], // no explicit claims needed
-            machine_owners: vec![MachineOwnerWire {
-                machine: machine("bot"),
-                owner: human("alice"),
-            }],
-        };
-
-        let action = ActionWire {
-            action_id: "pub_read".to_string(),
-            actor: machine("bot"),
-            description: String::new(),
-            resources_read: vec![public_res],
-            resources_write: vec![],
-            resources_delegate: vec![],
-            governs_humans: vec![],
-            argument: String::new(),
-            increases_machine_sovereignty: false,
-            resists_human_correction: false,
-            bypasses_verifier: false,
-            weakens_verifier: false,
-            disables_corrigibility: false,
-            machine_coalition_dominion: false,
-            coerces: false,
-            deceives: false,
-            self_modification_weakens_verifier: false,
-            machine_coalition_reduces_freedom: false,
-        };
-
+        let registry = minimal_registry_with_owner();
+        let mut action = base_action();
+        action.resources_read = vec![public_res];
         let result = engine::verify(&registry, &action);
-        assert!(result.permitted, "Public resource reads must always be permitted");
+        kani::assert!(result.permitted, "Public resource reads must always be permitted");
     }
 
-    // ── Property 5: Non-escalation — write denied without write claim ─────────
+    // ── Property: Write denied without write claim ────────────────────────────
 
     #[kani::proof]
     fn prop_write_denied_without_claim() {
@@ -217,30 +164,10 @@ mod proofs {
                 owner: human("alice"),
             }],
         };
-
-        let action = ActionWire {
-            action_id: "write_test".to_string(),
-            actor: machine("bot"),
-            description: String::new(),
-            resources_read: vec![],
-            resources_write: vec![res],
-            resources_delegate: vec![],
-            governs_humans: vec![],
-            argument: String::new(),
-            increases_machine_sovereignty: false,
-            resists_human_correction: false,
-            bypasses_verifier: false,
-            weakens_verifier: false,
-            disables_corrigibility: false,
-            machine_coalition_dominion: false,
-            coerces: false,
-            deceives: false,
-            self_modification_weakens_verifier: false,
-            machine_coalition_reduces_freedom: false,
-        };
-
+        let mut action = base_action();
+        action.resources_write = vec![res];
         let result = engine::verify(&registry, &action);
-        assert!(!result.permitted, "Write without write claim must be denied");
-        assert!(result.violations.iter().any(|v| v.contains("WRITE DENIED")));
+        kani::assert!(!result.permitted, "Write without write claim must be denied");
+        kani::assert!(result.violations.iter().any(|v| v.contains("WRITE DENIED")));
     }
 }
