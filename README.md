@@ -280,15 +280,14 @@ print(kernel_pubkey())     # share with auditors
 ```c
 #include "freedom_kernel.h"
 
-char out[4096];
-freedom_kernel_verify(
-    "{\"registry\":{...},\"action\":{...}}",
-    out, sizeof(out)
-);
-// → {"permitted":true,"signature":"a3f8...","signing_key":"d7e2..."}
+char out[FREEDOM_KERNEL_MAX_OUTPUT];
+const char *input = "{\"registry\":{...},\"action\":{...}}";
+freedom_kernel_verify(input, strlen(input), out, sizeof(out));
+// → {"permitted":true,"signature":"a3f8...","signing_key":"d7e2...",
+//    "key_id":"fk-1716123456","timestamp":1716123456,"nonce":"7f3a..."}
 ```
 
-JSON in, JSON out, ed25519 signed. Works from C, Go, Zig, Java (JNA), Node.js (ffi-napi), Rust.
+JSON in, JSON out, canonically signed. `input_len` is required (no null-termination reliance). Works from C, Go, Zig, Java (JNA), Node.js (ffi-napi), Rust.
 
 ---
 
