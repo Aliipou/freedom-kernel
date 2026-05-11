@@ -65,22 +65,33 @@ PERMITTED → execute → AuditLog (append-only JSON)
 BLOCKED   → halt    → surface violations to human owner
 ```
 
-**Trusted Computing Base:** `engine.rs` (203 LOC), `wire.rs`, `crypto.rs`, `capability.rs`.
+**Trusted Computing Base:** `engine.rs` (203 LOC), `capability.rs`, `wire.rs`, `crypto.rs`.
 Everything else — adapters, extensions, scheduler, IPC — is outside the TCB.
 
-See [`TCB.md`](TCB.md) for the full component boundary.
+The TCB boundary is mechanically enforced by CI on every commit:
+
+| Guard | Rule |
+|---|---|
+| LOC ceiling | `engine.rs` must stay ≤ 300 lines |
+| Public API | `engine.rs` exports exactly one function: `verify` |
+| Import scope | `engine.rs` may only import from `crate::capability` and `crate::wire` |
+| Purity | `engine.rs` must contain no randomness, network, or filesystem calls |
+
+Any PR touching TCB files must pass a [TCB Gate checklist](.github/pull_request_template.md) — including a written answer to: *"Can this exist outside `engine.rs`?"*
+
+See [`TCB.md`](TCB.md) and [`NON_GOALS.md`](NON_GOALS.md) for the full boundary definition.
 
 ### Repository layout
 
 ```
 freedom-kernel/src/
-  engine.rs        pure Rust verification (no PyO3, no I/O, auditable alone)
-  capability.rs    closed capability algebra (enums only — no interpretation)
-  wire.rs          typed JSON wire format (serde, no logic)
-  crypto.rs        ed25519 attestation
-  ffi.rs           C ABI
-  verifier.rs      PyO3 facade over engine.rs
-  registry.rs      ownership registry with attenuation enforcement
+  engine.rs        pure Rust verification (no PyO3, no I/O, auditable alone) — TCB
+  capability.rs    closed capability algebra (enums only, no interpretation) — TCB
+  wire.rs          typed JSON wire format (serde, no logic) — TCB
+  crypto.rs        ed25519 attestation — TCB
+  ffi.rs           C ABI — thin facade, not TCB
+  verifier.rs      PyO3 facade over engine.rs — not TCB
+  registry.rs      ownership registry with attenuation enforcement — not TCB
 
 src/freedom_theory/
   kernel/          Python implementation (mirrors Rust, used when Rust not built)
@@ -335,9 +346,13 @@ The book's argument is that AI governance requires a minimal axiomatic system de
 
 ## Contributing
 
-The one non-negotiable: contributions must not weaken the hard invariants in `engine.rs`. Any PR that loosens a sovereignty flag, removes an axiom check, or expands the TCB beyond its documented boundary will be rejected.
+Before opening a PR, answer one question:
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`TCB.md`](TCB.md).
+> **Can this feature exist entirely outside `engine.rs`?**
+
+If yes — it does not belong in the TCB. Extensions, adapters, and new modules are welcome. Changes that expand `engine.rs` require a written justification and must pass four CI guards.
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full rules and [`TCB.md`](TCB.md) for the boundary definition.
 
 ---
 
