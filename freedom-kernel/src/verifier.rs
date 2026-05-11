@@ -146,7 +146,7 @@ impl VerificationResult {
 fn entity_wire(e: &Entity) -> wire::EntityWire {
     wire::EntityWire {
         name: e.name.clone(),
-        kind: if e.is_machine() { "MACHINE".to_string() } else { "HUMAN".to_string() },
+        kind: if e.is_machine() { wire::EntityKind::Machine } else { wire::EntityKind::Human },
     }
 }
 
@@ -188,7 +188,7 @@ fn registry_wire(inner: &crate::registry::RegistryInner) -> wire::OwnershipRegis
         claims: inner.claims.iter().map(|c| wire::ClaimWire {
             holder: wire::EntityWire {
                 name: c.holder.name.clone(),
-                kind: if c.holder.is_machine { "MACHINE".to_string() } else { "HUMAN".to_string() },
+                kind: if c.holder.is_machine { wire::EntityKind::Machine } else { wire::EntityKind::Human },
             },
             resource: wire::ResourceWire {
                 name: c.resource.name.clone(),
@@ -204,8 +204,8 @@ fn registry_wire(inner: &crate::registry::RegistryInner) -> wire::OwnershipRegis
             expires_at: c.expires_at,
         }).collect(),
         machine_owners: inner.machine_owners.iter().map(|(mk, ok)| wire::MachineOwnerWire {
-            machine: wire::EntityWire { name: mk.name.clone(), kind: "MACHINE".to_string() },
-            owner:   wire::EntityWire { name: ok.name.clone(), kind: "HUMAN".to_string() },
+            machine: wire::EntityWire { name: mk.name.clone(), kind: wire::EntityKind::Machine },
+            owner:   wire::EntityWire { name: ok.name.clone(), kind: wire::EntityKind::Human },
         }).collect(),
     }
 }

@@ -30,6 +30,22 @@ jobs:
         with:
           workspaces: freedom-kernel
 
+      - name: TCB LOC guard — engine.rs must stay under 500 lines
+        run: |
+          loc=$(wc -l < src/engine.rs)
+          echo "engine.rs: ${loc} lines"
+          if [ "$loc" -gt 500 ]; then
+            echo "ERROR: engine.rs exceeds 500 LOC (TCB inflation). Current: ${loc}"
+            exit 1
+          fi
+
+      - name: TCB purity check — no randomness/network/filesystem in engine.rs
+        run: |
+          if grep -E 'OsRng|rand_core|TcpStream|UdpSocket|File::open|fs::read|fs::write|std::net' src/engine.rs; then
+            echo "ERROR: engine.rs contains I/O or randomness (TCB violation)"
+            exit 1
+          fi
+
       - name: Clippy — zero-panic policy
         run: |
           cargo clippy --all-targets -- \

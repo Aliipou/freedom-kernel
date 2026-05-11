@@ -1,9 +1,19 @@
 use serde::{Deserialize, Serialize};
 
+/// Closed enum replacing the stringly-typed kind field.
+/// Serializes as "HUMAN" / "MACHINE" — wire format is unchanged.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum EntityKind {
+    #[serde(rename = "HUMAN")]
+    Human,
+    #[serde(rename = "MACHINE")]
+    Machine,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityWire {
     pub name: String,
-    pub kind: String, // "HUMAN" | "MACHINE"
+    pub kind: EntityKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

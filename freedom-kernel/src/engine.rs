@@ -15,8 +15,9 @@ extern crate alloc;
 #[cfg(feature = "embedded")]
 use alloc::{format, string::String, vec, vec::Vec};
 
+use crate::capability::Operation;
 use crate::wire::{
-    ActionWire, ClaimWire, OwnershipRegistryWire, ResourceWire, VerificationResultWire,
+    ActionWire, ClaimWire, EntityKind, OwnershipRegistryWire, ResourceWire, VerificationResultWire,
 };
 
 const CONFIDENCE_WARN_THRESHOLD: f64 = 0.8;
@@ -44,9 +45,9 @@ fn can_act(
     registry: &OwnershipRegistryWire,
     actor_name: &str,
     resource: &ResourceWire,
-    op: &str,
+    op: Operation,
 ) -> (bool, f64, String) {
-    if resource.is_public && op == "read" {
+    if resource.is_public && op == Operation::Read {
         return (true, 1.0, "public resource".to_string());
     }
     let candidates: Vec<&ClaimWire> = registry
@@ -58,10 +59,9 @@ fn can_act(
                 && c.resource.rtype == resource.rtype
                 && claim_valid(c)
                 && match op {
-                    "read" => c.can_read,
-                    "write" => c.can_write,
-                    "delegate" => c.can_delegate,
-                    _ => false,
+                    Operation::Read => c.can_read,
+                    Operation::Write => c.can_write,
+                    Operation::Delegate => c.can_delegate,
                 }
         })
         .collect();
@@ -118,7 +118,7 @@ pub fn verify(registry: &OwnershipRegistryWire, action: &ActionWire) -> Verifica
     let actor = &action.actor;
 
     // 2. A4: machine must have a registered human owner
-    if actor.kind == "MACHINE" {
+    if actor.kind == EntityKind::Machine {
         let has_owner = registry.machine_owners.iter().any(|mo| mo.machine.name == actor.name);
         if !has_owner {
             violations.push(format!(
@@ -130,7 +130,7 @@ pub fn verify(registry: &OwnershipRegistryWire, action: &ActionWire) -> Verifica
     }
 
     // 3. A6: no machine may govern any human
-    if actor.kind == "MACHINE" {
+    if actor.kind == EntityKind::Machine {
         for human in &action.governs_humans {
             violations.push(format!(
                 "A6: {} cannot govern human {} \
@@ -142,7 +142,7 @@ pub fn verify(registry: &OwnershipRegistryWire, action: &ActionWire) -> Verifica
 
     // 4. Resource access checks
     for r in &action.resources_read {
-        let (ok, conf, reason) = can_act(registry, &actor.name, r, "read");
+        let (ok, conf, reason) = can_act(registry, &actor.name, r, Operation::Read);
         min_conf = min_conf.min(conf);
         if !ok {
             violations.push(format!("READ DENIED on {}:{}: {}", r.rtype, r.name, reason));
@@ -155,7 +155,7 @@ pub fn verify(registry: &OwnershipRegistryWire, action: &ActionWire) -> Verifica
     }
 
     for r in &action.resources_write {
-        let (ok, conf, reason) = can_act(registry, &actor.name, r, "write");
+        let (ok, conf, reason) = can_act(registry, &actor.name, r, Operation::Write);
         min_conf = min_conf.min(conf);
         if !ok {
             violations.push(format!("WRITE DENIED on {}:{}: {}", r.rtype, r.name, reason));
@@ -182,7 +182,7 @@ pub fn verify(registry: &OwnershipRegistryWire, action: &ActionWire) -> Verifica
     }
 
     for r in &action.resources_delegate {
-        let (ok, conf, reason) = can_act(registry, &actor.name, r, "delegate");
+        let (ok, conf, reason) = can_act(registry, &actor.name, r, Operation::Delegate);
         min_conf = min_conf.min(conf);
         if !ok {
             violations.push(format!("DELEGATION DENIED on {}:{}: {}", r.rtype, r.name, reason));

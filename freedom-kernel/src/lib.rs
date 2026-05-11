@@ -1,3 +1,4 @@
+pub mod capability;
 mod crypto;
 pub(crate) mod engine;
 pub mod entities;

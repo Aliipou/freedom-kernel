@@ -50,15 +50,14 @@ impl ClaimEntry {
         !self.is_expired() && self.confidence > 0.0
     }
 
-    pub fn covers(&self, op: &str) -> bool {
+    pub fn covers(&self, op: crate::capability::Operation) -> bool {
         if !self.is_valid() {
             return false;
         }
         match op {
-            "read" => self.can_read,
-            "write" => self.can_write,
-            "delegate" => self.can_delegate,
-            _ => false,
+            crate::capability::Operation::Read => self.can_read,
+            crate::capability::Operation::Write => self.can_write,
+            crate::capability::Operation::Delegate => self.can_delegate,
         }
     }
 }
@@ -181,8 +180,8 @@ impl RegistryInner {
         None
     }
 
-    pub fn can_act(&self, holder: &EntityKey, resource: &ResourceKey, op: &str) -> (bool, f64, String) {
-        if resource.is_public && op == "read" {
+    pub fn can_act(&self, holder: &EntityKey, resource: &ResourceKey, op: crate::capability::Operation) -> (bool, f64, String) {
+        if resource.is_public && op == crate::capability::Operation::Read {
             return (true, 1.0, "public resource".to_string());
         }
         let candidates: Vec<&ClaimEntry> = self
@@ -339,7 +338,11 @@ impl OwnershipRegistry {
     ) -> (bool, f64, String) {
         let hk = entity_to_key(&holder);
         let rk = resource_to_key(&resource);
-        self.inner.lock().unwrap().can_act(&hk, &rk, operation)
+        let op = match crate::capability::Operation::from_str(operation) {
+            Some(op) => op,
+            None => return (false, 0.0, format!("unknown operation: {}", operation)),
+        };
+        self.inner.lock().unwrap().can_act(&hk, &rk, op)
     }
 
     /// Delegate a claim from `delegated_by` to `claim.holder`.
