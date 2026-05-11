@@ -37,6 +37,20 @@ See [`NON_GOALS.md`](NON_GOALS.md) and [`THREAT_MODEL.md`](THREAT_MODEL.md) for 
 
 ---
 
+## Layer separation
+
+The project has three distinct layers. Keep them separate:
+
+| Layer | What it is | Required to use the kernel? |
+|---|---|---|
+| **Formal kernel** | `engine.rs` — typed invariant checker, ~200 LOC | Yes |
+| **Governance axioms** | A4–A7 encoded in the kernel; A1–A3 as stated motivation | A4–A7 only |
+| **Philosophical foundation** | The book, the theory, civilizational argument | No |
+
+Schedulers, IPC, quota systems, and agent spawning live entirely outside the kernel. They produce `Action` objects; the kernel verifies them. The kernel never calls out.
+
+---
+
 ## The precise claim
 
 Given a typed registry (who owns what, what has been delegated to whom), the kernel answers one question:
@@ -187,22 +201,22 @@ No context, argument, or emergency overrides them.
 
 ---
 
-## Formal properties
+## Mechanically verified properties of `engine.rs`
+
+These proofs cover **`engine.rs` only**. They say nothing about AI governance, alignment, or safety in general. They verify specific input/output behaviors of a ~200-line Rust function.
 
 ### Kani bounded model-checking (19 harnesses)
 
-The following are machine-checked against the Rust engine, not just claimed:
-
-| Harness | Property |
+| Harness | What is verified |
 |---|---|
-| `prop_increases_machine_sovereignty` … `prop_coalition_reduces_freedom` | All 10 flags unconditionally block |
-| `prop_ownerless_machine_blocked` | A4: ownerless machine → BLOCKED |
-| `prop_machine_governs_human_blocked` | A6: machine governs human → BLOCKED |
-| `prop_public_resource_read_permitted` | Public reads always pass |
-| `prop_write_denied_without_claim` / `prop_read_denied_without_claim` | A7 |
-| `prop_permitted_deterministic` | Same input → same output, always |
-| `prop_permitted_implies_no_violations` | Soundness |
-| `prop_blocked_implies_violations_non_empty` | Completeness |
+| `prop_increases_machine_sovereignty` … `prop_coalition_reduces_freedom` | All 10 flags produce BLOCKED, for any input |
+| `prop_ownerless_machine_blocked` | Machine with no owner entry → BLOCKED, always |
+| `prop_machine_governs_human_blocked` | Machine governing human → BLOCKED, always |
+| `prop_public_resource_read_permitted` | is_public=true + read → PERMITTED, always |
+| `prop_write_denied_without_claim` / `prop_read_denied_without_claim` | No claim → BLOCKED |
+| `prop_permitted_deterministic` | Same input → same output, no hidden state |
+| `prop_permitted_implies_no_violations` | PERMITTED ↔ violations list is empty |
+| `prop_blocked_implies_violations_non_empty` | BLOCKED ↔ at least one violation |
 
 ```bash
 cargo kani --harness prop_increases_machine_sovereignty
@@ -210,18 +224,18 @@ cargo kani --harness prop_increases_machine_sovereignty
 
 ### Lean 4 (proved theorems, no `sorry`)
 
-| Theorem | File |
+| Theorem | What is proved |
 |---|---|
-| `forbidden_flags_always_block` | `TCB.lean` |
-| `verify_deterministic` | `TCB.lean` |
-| `taint_monotone` | `Temporal.lean` |
-| `attenuation_cannot_escalate` | `MultiAgent.lean` |
+| `forbidden_flags_always_block` | Flag set → `permitted = false`, constructively |
+| `verify_deterministic` | Pure function: no state, no effects |
+| `taint_monotone` | IFC taint only grows across a plan, never shrinks |
+| `attenuation_cannot_escalate` | Delegated confidence ≤ delegator confidence |
 
 ```bash
 cd formal/lean4 && lake build
 ```
 
-**What is NOT formally verified:** the Python implementation, all extensions, the adapter layer, multi-agent spawning semantics. See [`formal/INCOMPLETENESS.md`](formal/INCOMPLETENESS.md).
+**Scope of these proofs:** `engine.rs` behaviors on typed inputs. Not proved: the Python implementation, extensions, adapters, multi-agent semantics, or any property involving natural language. See [`formal/INCOMPLETENESS.md`](formal/INCOMPLETENESS.md).
 
 ---
 
@@ -284,19 +298,26 @@ JSON in, JSON out. Works from C, Go, Zig, Java (JNA), Node.js (ffi-napi).
 
 ---
 
-## Axioms (runtime-enforced subset)
+## Invariants the kernel enforces
 
-| Axiom | Statement | Status |
-|---|---|---|
-| A1 | Ultimate ownership is not by any human, state, or machine | Foundation — not runtime-enforced |
-| A2 | No human owns another human | Foundation — not runtime-enforced |
-| A3 | Every person holds typed, scoped property rights | Foundation — not runtime-enforced |
-| **A4** | **Every machine has a registered human owner** | **Runtime-enforced** |
-| **A5** | **Machine scope ⊆ owner's property scope** | **Runtime-enforced** |
-| **A6** | **No machine governs any human** | **Runtime-enforced** |
-| **A7** | **Machine acts only on delegated resources** | **Runtime-enforced** |
+| Invariant | What the kernel checks |
+|---|---|
+| **A4** | Every machine actor has a registered human owner entry in the registry |
+| **A5** | Machine's resource scope is contained within its owner's scope |
+| **A6** | No machine actor appears in `governs_humans` of any action |
+| **A7** | Machine may only act on resources for which it holds a valid, unexpired claim |
 
-A1–A3 explain *why* A4–A7 exist. The kernel enforces A4–A7. You do not need to accept A1–A3 to use or evaluate the kernel.
+These are purely structural checks over a typed graph. The kernel does not interpret semantics, intent, or context.
+
+### Where these invariants come from
+
+A4–A7 derive from a formal system developed in *نظریه آزادی* (Theory of Freedom) by Mohammad Ali Jannat Khah Doust (pages 791–816), which additionally states A1–A3 as foundational premises:
+
+- A1: Ultimate ownership is not by any human, state, or machine
+- A2: No human owns another human  
+- A3: Every person holds typed, scoped property rights
+
+**The kernel does not enforce, require, or depend on A1–A3.** They explain the motivation for A4–A7. A4–A7 stand as a formal system independently — you do not need to accept A1–A3 to use, evaluate, or deploy this kernel.
 
 ---
 
@@ -330,17 +351,6 @@ Extensions wrap the kernel without modifying it. The kernel gate runs first, unc
 pip install -e ".[dev]"
 pytest --cov=freedom_theory   # 165 tests, 85% coverage gate
 ```
-
----
-
-## Theoretical foundation
-
-The axioms derive from the formal system in:
-
-> *نظریه آزادی، ایران و دین* (Theory of Freedom, Iran and Religion)  
-> Mohammad Ali Jannat Khah Doust — pages 791–816
-
-The book's argument is that AI governance requires a minimal axiomatic system derived from property rights — not preference calibration. A4–A7 operationalize that argument as infrastructure. The kernel is operationally independent of the book's political and metaphysical layers; the axioms stand as a formal system on their own.
 
 ---
 
