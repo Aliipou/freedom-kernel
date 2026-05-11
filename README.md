@@ -1,6 +1,6 @@
 # Freedom Kernel
 
-**A small, formal capability gate for agentic AI actions**
+**A capability-security kernel for agent runtimes**
 
 [![CI](https://github.com/Aliipou/freedom-kernel/actions/workflows/ci.yml/badge.svg)](https://github.com/Aliipou/freedom-kernel/actions)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
@@ -323,13 +323,9 @@ These are purely structural checks over a typed graph. The kernel does not inter
 
 ### Where these invariants come from
 
-A4–A7 derive from a formal system developed in *نظریه آزادی* (Theory of Freedom) by Mohammad Ali Jannat Khah Doust (pages 791–816), which additionally states A1–A3 as foundational premises:
+A4–A7 derive from a formal system developed in *نظریه آزادی* (Theory of Freedom) by Mohammad Ali Jannat Khah Doust (pages 791–816). The full axiom set (A1–A7), rights ontology, and theoretical motivation are in [`THEORY.md`](THEORY.md).
 
-- A1: Ultimate ownership is not by any human, state, or machine
-- A2: No human owns another human  
-- A3: Every person holds typed, scoped property rights
-
-**The kernel does not enforce, require, or depend on A1–A3.** They explain the motivation for A4–A7. A4–A7 stand as a formal system independently — you do not need to accept A1–A3 to use, evaluate, or deploy this kernel.
+**The kernel does not enforce, require, or depend on A1–A3.** A4–A7 stand as a formal system independently — you do not need to accept the broader theoretical framework to use, evaluate, or deploy this kernel.
 
 ---
 

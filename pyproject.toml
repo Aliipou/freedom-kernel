@@ -5,14 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "freedom-theory-ai"
 version = "1.0.0"
-description = "Formal axiomatic ethics runtime for AGI — grounded in individual property rights"
+description = "Capability-security kernel for agent runtimes — typed authority verification with formal invariants"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [
   { name = "Contributors" },
 ]
-keywords = ["ai", "ethics", "alignment", "agi", "formal-methods", "property-rights"]
+keywords = ["capability-security", "agent-runtimes", "formal-verification", "authority-verification", "rust", "formal-methods"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
