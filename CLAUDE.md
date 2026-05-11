@@ -1,475 +1,267 @@
-الان مهم‌ترین چیز این نیست که «ویژگی اضافه کنی».
-مهم‌ترین چیز این است که پروژه را از collapse معماری نجات بدهی.
+# CLAUDE.md — Engineering Guidelines for Ali's Projects
 
-تو الان در dangerous midpoint هستی:
-
-* نه prototype ساده‌ای
-* نه production-grade system
-
-و بیشتر پروژه‌ها دقیقاً همین‌جا می‌میرند.
-
-پس roadmap باید ruthless باشد.
+> **این فایل را در root هر پروژه قرار بده.**
+> Claude Code این فایل را به‌عنوان context اصلی می‌خواند و تمام تصمیمات باید با این اصول همخوانی داشته باشند.
 
 ---
 
-# فاز 0 — قانون اساسی پروژه
+## 0. First Rule — Read Before Writing Anything
 
-# (قبل از هر کدی)
+Before writing a single line of code or suggesting any architecture, answer these three questions:
 
-اگر این را ننویسی، بعداً پروژه از داخل متلاشی می‌شود.
-
----
-
-# 0.1 — TCB.md
-
-اولین فایل حیاتی.
-
-باید دقیق تعریف کند:
-
-| Component             | In TCB?    | Why                        |
-| --------------------- | ---------- | -------------------------- |
-| engine.rs             | YES        | invariant enforcement      |
-| crypto.rs             | YES        | attestation integrity      |
-| verifier.rs           | YES        | deterministic mediation    |
-| planner.rs            | ideally NO | higher-order orchestration |
-| NLP                   | NO         | non-formal                 |
-| embeddings            | NO         | semantic                   |
-| manipulation detector | NO         | heuristic                  |
-| LLM runtime           | NO         | nondeterministic           |
-| schedulers            | NO         | replaceable policy         |
+1. **Does this feature exist in the PRD / task description?** If no → do not build it.
+2. **Is there a simpler way to do this with less code?** If yes → do that instead.
+3. **Will this decision create tech debt in 6 months?** If yes → flag it, don't hide it.
 
 ---
 
-## قانون طلایی:
+## 1. Complexity Budget
 
-```text id="r1"
-If it requires interpretation,
-it is NOT TCB.
+Every project has a **complexity budget**. Spending from it must be justified.
+
+| Layer | Allowed complexity | Needs justification |
+|---|---|---|
+| Data models | Simple fields, clear relations | Custom metaclasses, multi-inheritance |
+| API layer | REST with standard verbs | GraphQL, RPC, custom protocols |
+| Business logic | Plain functions / services | Design patterns (Factory, Strategy, etc.) |
+| Infrastructure | Docker + docker-compose | Kubernetes (only if scale demands it) |
+| Async | Only when I/O bound and measured | Async by default "just in case" |
+
+**Rule:** If you are about to introduce a design pattern, stop and ask: *"What concrete problem does this solve today?"*
+
+---
+
+## 2. Anti-Overengineering Rules
+
+### 2.1 No Premature Abstraction
+- Do NOT create base classes, mixins, or abstract interfaces until there are **at least 3 concrete use cases**.
+- Do NOT create a generic utility if it is only used once.
+- Prefer duplication over the wrong abstraction.
+
+```python
+# ❌ Overengineered — one use case
+class BaseRepositoryFactory(ABC):
+    @abstractmethod
+    def create_repository(self, model: Type[T]) -> Repository[T]: ...
+
+# ✅ Simple — solves the actual problem
+def get_user(db: Session, user_id: int) -> User:
+    return db.query(User).filter(User.id == user_id).first()
 ```
 
-این باید sacred law شود.
+### 2.2 No Speculative Features
+- Do NOT build features that are "probably needed later."
+- Do NOT add config flags for behavior that has only one current use.
+- Do NOT add plugin systems, event buses, or hook registries unless explicitly requested.
 
----
+### 2.3 Dependency Discipline
+- Every new dependency must justify itself: *"What does this replace, and is the tradeoff worth it?"*
+- Prefer stdlib over third-party for small tasks.
+- If a library is only used in one file, consider inlining the logic instead.
 
-# 0.2 — NON_GOALS.md
+### 2.4 No Over-Layering
+```
+# ❌ 6-layer architecture for a CRUD API
+Request → Router → Controller → Service → Repository → Model → DB
 
-این document پروژه را نجات می‌دهد.
-
-صریح بنویس:
-
-Freedom Kernel does NOT:
-
-* solve alignment
-* infer intent
-* understand natural language
-* detect truth
-* guarantee benevolence
-* prevent covert channels
-* contain superintelligence
-* verify semantic equivalence
-
-این باعث می‌شود expectations انفجاری نشوند.
-
----
-
-# 0.3 — THREAT_MODEL.md
-
-بدون این، formal verification تقریباً cosmetic است.
-
-باید explicit بنویسی:
-
-## Trusted:
-
-* verifier
-* cryptographic primitives
-* registry integrity
-
-## Untrusted:
-
-* LLMs
-* humans
-* prompts
-* schedulers
-* tools
-* IPC payloads
-* embeddings
-
-## Out of scope:
-
-* side-channel attacks
-* timing leakage
-* steganography
-* compromised kernels
-* malicious owners
-
----
-
-# فاز 1 — capability algebra
-
-# مهم‌ترین بخش کل پروژه
-
-قبل از scheduler.
-قبل از runtime.
-قبل از AGI fantasies.
-
----
-
-# 1.1 — capability.rs
-
-نه implementation سنگین.
-
-فقط algebra.
-
-مثلاً:
-
-```rust id="r2"
-enum CapabilityKind {
-    Read,
-    Write,
-    Delegate,
-    Spawn,
-    IPCSend,
-    IPCReceive,
-    ConsumeQuota,
-    EnterDomain,
-}
+# ✅ For simple CRUD
+Request → Router (with inline service logic) → Model → DB
+# Add layers only when business logic grows
 ```
 
 ---
 
-# 1.2 — attenuation semantics
+## 3. Anti-Overfitting Rules
 
-باید formally تعریف کنی:
+Overfitting here means: **the solution is too specific to the current example/test/dataset and breaks on real-world variation.**
 
-```text id="r3"
-child_capability ⊆ parent_capability
+### 3.1 No Hardcoded Assumptions
+```python
+# ❌ Overfitted — assumes Finnish locale always
+def format_date(dt):
+    return dt.strftime("%d.%m.%Y")  # hardcoded
+
+# ✅ Generalized
+def format_date(dt, locale="fi_FI"):
+    return babel.dates.format_date(dt, locale=locale)
 ```
 
-بدون ambiguity.
+### 3.2 No Magic Numbers / Strings
+```python
+# ❌ What is 7? What is "active"?
+if user.status == "active" and days_since_login < 7:
 
----
-
-# 1.3 — transfer semantics
-
-فرق این‌ها باید crystal clear باشد:
-
-| Operation | Meaning               |
-| --------- | --------------------- |
-| delegate  | temporary subset      |
-| transfer  | ownership move        |
-| attenuate | weaker capability     |
-| clone     | duplicate authority   |
-| lease     | time-bound delegation |
-| revoke    | invalidate capability |
-
-اگر این early formalize نشود،
-بعداً جهنم consistency می‌شود.
-
----
-
-# 1.4 — revocation model
-
-این خیلی مهم است.
-
-Revocation سخت‌تر از delegation است.
-
-باید تصمیم بگیری:
-
-## eager revocation
-
-یا
-
-## lazy revocation
-
-و tradeoffها را explicit کنی.
-
----
-
-# فاز 2 — typed IR hardening
-
-الان Action model هنوز زیادی abstract است.
-
-باید close-world شود.
-
----
-
-# 2.1 — ممنوعیت Stringly-Typed Hell
-
-این خطرناک است:
-
-```rust id="r4"
-HashMap<String, Value>
+# ✅ Named and configurable
+MAX_INACTIVE_DAYS = int(os.getenv("MAX_INACTIVE_DAYS", 7))
+UserStatus = Literal["active", "inactive", "banned"]
+if user.status == UserStatus.active and days_since_login < MAX_INACTIVE_DAYS:
 ```
 
-یا:
+### 3.3 Tests Must Cover Edge Cases, Not Just Happy Path
+- Minimum: happy path + one failure case + one boundary/edge case per function.
+- Do NOT write tests that only pass because the test data matches the implementation exactly.
+- If a test breaks when you rename a variable, it's testing the wrong thing.
 
-```rust id="r5"
-permissions: Vec<String>
+### 3.4 ML / AI Specific (for ML projects)
+- Always split: train / validation / **held-out test** — never touch test set during development.
+- Report metrics on validation AND test. If they diverge >5%, investigate before shipping.
+- Do NOT tune hyperparameters against the test set.
+- Log all experiments: model version, dataset version, metrics, date.
+- Prefer interpretable models (Logistic Regression, XGBoost) unless complexity is justified by metric gain.
+- SHAP / feature importance is mandatory before declaring a model production-ready.
+
+---
+
+## 4. Stack Conventions (Ali's Default Stack)
+
+### Backend
+- **Language:** Python 3.11+
+- **API:** FastAPI (preferred) or Django REST Framework
+- **ORM:** SQLAlchemy (async) or Django ORM
+- **Validation:** Pydantic v2
+- **DB:** PostgreSQL (primary), Redis (cache/queue only)
+- **Auth:** JWT via python-jose or Django SimpleJWT
+
+### Infrastructure
+- **Local dev:** Docker + docker-compose (mandatory — no "works on my machine")
+- **CI/CD:** GitHub Actions
+- **Cloud:** Azure (primary), AWS Free Tier (for demos/thesis work)
+- **Container orchestration:** Docker Compose for dev/small prod; Kubernetes only if documented scale requirement exists
+
+### Forbidden by default (needs explicit approval)
+- Celery (use FastAPI BackgroundTasks or APScheduler first)
+- Elasticsearch (use PostgreSQL full-text search first)
+- Microservices (use modular monolith first)
+- Redis Pub/Sub as primary event bus
+- Any ORM other than SQLAlchemy / Django ORM
+
+---
+
+## 5. Code Style Rules
+
+### 5.1 Function Size
+- Max ~30 lines per function. If longer → extract and name the extracted piece clearly.
+- One function = one responsibility. The name should describe it completely.
+
+### 5.2 Error Handling
+```python
+# ❌ Silent failures
+try:
+    result = do_thing()
+except Exception:
+    pass
+
+# ✅ Explicit, logged, typed
+try:
+    result = do_thing()
+except ValueError as e:
+    logger.warning("Invalid input for do_thing: %s", e)
+    raise HTTPException(status_code=422, detail=str(e)) from e
 ```
 
-این formalism را می‌کشد.
+### 5.3 Comments
+- Comment **why**, not **what**. The code already shows what.
+- If you need a comment to explain what a block does → refactor it into a named function.
+
+### 5.4 Naming
+- Variables: `snake_case`, descriptive (`user_id` not `uid`, `active_sessions` not `as`)
+- No abbreviations except established ones: `db`, `id`, `url`, `api`, `http`
+- Boolean variables: `is_`, `has_`, `can_` prefix always
 
 ---
 
-# 2.2 — Action taxonomy
+## 6. Project Structure (Default)
 
-همه actionها finite باشند:
+```
+project-name/
+├── CLAUDE.md               ← this file
+├── README.md               ← setup + usage (mandatory)
+├── .env.example            ← all env vars documented, no defaults for secrets
+├── docker-compose.yml
+├── Dockerfile
+├── pyproject.toml          ← or requirements.txt if simple
+├── src/
+│   └── app/
+│       ├── main.py
+│       ├── config.py       ← settings via pydantic-settings
+│       ├── models/         ← DB models
+│       ├── schemas/        ← Pydantic schemas
+│       ├── routers/        ← FastAPI routers
+│       ├── services/       ← business logic (only if needed)
+│       └── utils/          ← pure utility functions
+└── tests/
+    ├── conftest.py
+    ├── unit/
+    └── integration/
+```
 
-```rust id="r6"
-enum ActionKind {
-    ReadResource,
-    WriteResource,
-    SendIPC,
-    SpawnAgent,
-    ConsumeQuota,
-    EnterDomain,
-}
+**Do NOT create this structure speculatively.** Add folders as they are needed.
+
+---
+
+## 7. Decision Log (Mandatory for Non-Obvious Choices)
+
+When you make a non-trivial architectural decision, add a record to `DECISIONS.md`:
+
+```markdown
+## [DATE] — Why X instead of Y
+
+**Context:** What problem were we solving?
+**Decision:** What did we choose?
+**Reason:** Why this and not the alternative?
+**Trade-offs accepted:** What did we give up?
+**Revisit when:** Under what conditions should we reconsider?
 ```
 
 ---
 
-# 2.3 — Explicit side effects
+## 8. What Claude Code Should NOT Do Without Asking
 
-هیچ side effect implicit نباشد.
+1. **Change the database schema** without a migration file.
+2. **Add a new dependency** to pyproject.toml / requirements.txt without noting it.
+3. **Rename public API endpoints** — breaking change.
+4. **Add environment variables** without updating `.env.example`.
+5. **Delete files** — archive them or ask first.
+6. **Refactor working code** unless the task explicitly asks for it.
+7. **Generate test data** that is tied to production-like PII.
 
-مثلاً:
+---
 
-❌ بد:
+## 9. The Simplicity Check (Run Before Every PR / Commit)
 
-```text id="r7"
-Action("search_web")
+Ask yourself:
+
+- [ ] Could a junior dev understand this without asking me?
+- [ ] Is every abstraction here actually used more than once?
+- [ ] Does this work with inputs I didn't write myself?
+- [ ] Are there any TODO/FIXME comments? → Fix them or file an issue, don't leave them.
+- [ ] Does the README explain how to run this from scratch?
+
+If any answer is "no" → fix before committing.
+
+---
+
+## 10. Communication Protocol with Claude Code
+
+When giving Claude Code a task, use this format for best results:
+
+```
+TASK: [one sentence — what to build]
+SCOPE: [what is IN scope — explicit list]
+OUT OF SCOPE: [what NOT to touch]
+CONSTRAINTS: [tech stack, existing patterns to follow]
+DONE WHEN: [acceptance criteria — how do we know it's finished]
 ```
 
-✅ خوب:
-
-```text id="r8"
-Read(network:web)
-Write(cache:search_results)
-ConsumeQuota(api_tokens)
+Example:
+```
+TASK: Add password reset endpoint to the existing auth router
+SCOPE: POST /auth/reset-password, email sending via existing EmailService
+OUT OF SCOPE: Frontend, new auth provider, changing existing login flow
+CONSTRAINTS: FastAPI, existing User model, no new dependencies
+DONE WHEN: Endpoint tested with valid + invalid token, README updated
 ```
 
 ---
 
-# فاز 3 — formal boundary defense
-
-الان بزرگ‌ترین خطر:
-semantic creep است.
-
----
-
-# 3.1 — ممنوعیت NLP داخل kernel
-
-هرگز:
-
-* regex policy
-* semantic similarity
-* embedding checks
-* intent inference
-* LLM classification
-
-داخل TCB نرود.
-
-هرگز.
-
----
-
-# 3.2 — deterministic purity CI check
-
-CI باید fail کند اگر:
-
-* randomness
-* time dependency
-* network access
-* filesystem mutation
-
-داخل engine.rs بیاید.
-
----
-
-# 3.3 — LOC budget
-
-جدی می‌گویم:
-
-برای engine.rs سقف LOC بگذار.
-
-مثلاً:
-
-```text id="r9"
-Hard limit: 500 LOC
-```
-
-چون TCB inflation واقعی‌ترین خطر است.
-
----
-
-# فاز 4 — real systems engineering
-
-اینجا پروژه از research toy جدا می‌شود.
-
----
-
-# 4.1 — benchmark suite
-
-لازم داری:
-
-* verification latency
-* plan verification scaling
-* spawn chain costs
-* IPC throughput
-* memory usage
-
----
-
-# 4.2 — fuzzing
-
-باید brutal fuzzing داشته باشی.
-
-مخصوصاً:
-
-* malformed claims
-* recursive delegation
-* cyclic graphs
-* capability overflow
-* TOCTOU races
-
----
-
-# 4.3 — adversarial suite
-
-این مهم‌تر از unit tests است.
-
-مثلاً:
-
-* privilege escalation attempts
-* covert delegation
-* fake revocation
-* taint laundering
-* recursive spawn attacks
-
----
-
-# فاز 5 — minimal runtime
-
-نه OS کامل.
-نه AGI platform.
-
-فقط:
-reference runtime.
-
----
-
-# 5.1 — ipc.rs
-
-فقط mediated channels.
-
-نه distributed magic.
-
----
-
-# 5.2 — quota.rs
-
-ساده:
-
-* token budgets
-* spawn budgets
-* API budgets
-
----
-
-# 5.3 — scheduler.rs
-
-تا جای ممکن dumb.
-
-Scheduler policy نباید TCB شود.
-
----
-
-# فاز 6 — ecosystem credibility
-
-الان پروژه technically interesting است.
-ولی هنوز socially untrusted است.
-
----
-
-# 6.1 — rename positioning
-
-روی این branding برو:
-
-```text id="r10"
-Capability-security kernel
-for autonomous systems
-```
-
-نه:
-
-* AGI kernel
-* ethics engine
-* superalignment runtime
-
----
-
-# 6.2 — serious demos
-
-مثلاً:
-
-* OpenAI tool execution
-* LangGraph orchestration
-* AutoGen spawning
-* MCP mediation
-
----
-
-# 6.3 — external review
-
-باید security people واقعی repo را critique کنند.
-
-اگر فقط AI people ببینند،
-feedback کافی نمی‌گیری.
-
----
-
-# مهم‌ترین توصیه کل roadmap
-
-## complexity را به edges هل بده.
-
-و:
-
-## core را stupidly small نگه دار.
-
----
-
-# قانون طلایی نهایی
-
-اگر feature جدید:
-
-* semantic interpretation می‌خواهد
-* probabilistic reasoning می‌خواهد
-* NLP می‌خواهد
-* ML inference می‌خواهد
-* dynamic policy می‌خواهد
-
-احتمال زیاد:
-
-## داخل kernel تعلق ندارد.
-
----
-
-# چیزی که پروژه می‌تواند بشود
-
-اگر discipline حفظ شود:
-
-* seccomp برای agentic systems
-* OPA برای AI execution
-* capability microkernel برای autonomous runtimes
-
----
-
-# چیزی که پروژه را نابود می‌کند
-
-* ego expansion
-* universal ethics claims
-* semantic creep
-* TCB inflation
-* abstraction addiction
-
-این‌ها قاتل‌های واقعی‌اند.
+*Last updated: May 2026 | Owner: Ali (github.com/Aliipou)*
