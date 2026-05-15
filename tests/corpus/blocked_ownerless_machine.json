@@ -1,0 +1,1 @@
+{"input": {"action_id": "orphan-act", "actor": {"name": "Orphan", "kind": "MACHINE"}, "registry": {"claims": [], "machine_owners": []}}, "expected_permitted": false, "expected_violations_contain": ["A4"]}

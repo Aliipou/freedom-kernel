@@ -1,0 +1,4 @@
+# file: D:\freedom-kernel-main\examples\fastapi_agent\main.py
+# hypothesis_version: 6.148.7
+
+[400, 403, 8000, '/agent/tool', '/data/alice/', '/health', '/outputs/', '0.0.0.0', '1.0.0', 'AUDIT_LOG', 'Freedom-gated agent', '__main__', 'action_id', 'agent-bot', 'alice', 'alice-dataset', 'confidence', 'freedom-theory-ai', 'kernel', 'ok', 'permitted', 'public-data', 'report.txt', 'status', 'violations']

@@ -1,0 +1,11 @@
+# Benchmark Results
+
+Status: PENDING — cargo bench not yet run.
+
+To run:
+  cd freedom-kernel
+  cargo bench 2>&1 | tee formal/bench_results.txt
+
+Target: <1µs mean for a 100-claim registry on the Rust backend.
+
+Last reviewed: 2026-05-16.

@@ -1,0 +1,15 @@
+# Kani Harness Results
+
+Status: PENDING — cargo-kani not yet installed or run.
+
+To run:
+  cd freedom-kernel
+  cargo install cargo-kani
+  cargo kani --harness prop_increases_machine_sovereignty 2>&1 | tee formal/kani_sovereignty.txt
+  cargo kani --harness prop_ownerless_machine_blocked    2>&1 | tee formal/kani_ownership.txt
+  cargo kani --harness prop_machine_governs_human_blocked 2>&1 | tee formal/kani_governance.txt
+  cargo kani --harness prop_delegation_monotonically_narrows 2>&1 | tee formal/kani_delegation.txt
+
+Expected: VERIFICATION SUCCESSFUL for all harnesses.
+
+Last reviewed: 2026-05-16. Kani verification PENDING.

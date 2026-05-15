@@ -1,0 +1,4 @@
+# file: D:\freedom-kernel-main\src\freedom_theory\kernel\verifier.py
+# hypothesis_version: 6.148.7
+
+[0.0, 0.8, 1.0, 'BLOCKED', 'FORBIDDEN', 'PERMITTED', 'delegate', 'read', 'write']

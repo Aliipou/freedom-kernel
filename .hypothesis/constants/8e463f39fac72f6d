@@ -1,0 +1,4 @@
+# file: D:\freedom-kernel-main\src\freedom_theory\extensions\compass.py
+# hypothesis_version: 6.148.7
+
+[0.0, 0.1, 0.25, 0.35, 0.5, 1.0, 1.5, 2.0, 3.0, 'away from', 'coercive_acts', 'identity', 'inf', 'neutral to', 'person', 'rights_violations', 'rtype', 'toward', 'value', 'voluntary_agreements']

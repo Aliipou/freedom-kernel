@@ -1,0 +1,4 @@
+# file: D:\freedom-kernel-main\src\freedom_theory\kernel\audit.py
+# hypothesis_version: 6.148.7
+
+['a', 'action_id', 'confidence', 'permitted', 'signature', 'ts', 'utf-8', 'violations', 'warnings']

@@ -1,0 +1,4 @@
+# file: D:\freedom-kernel-main\src\freedom_theory\__init__.py
+# hypothesis_version: 6.148.7
+
+['A2ViolationError', 'Action', 'AgentType', 'AuditLog', 'AutoGenKernelAdapter', 'CompassScore', 'ConflictRecord', 'ConsentRecord', 'EmergencyContext', 'EmergencyProtocol', 'Entity', 'ExecutionContext', 'FreedomTool', 'FreedomVerifier', 'GoalNode', 'IFCViolation', 'OwnershipRegistry', 'Policy', 'PolicyRule', 'PolicyVerifier', 'ProposedRule', 'Resource', 'ResourceType', 'RightsClaim', 'SecurityLattice', 'SynthesisEngine', 'VerificationResult', 'WorldState', 'compass_score', 'compass_score_action', 'detect_manipulation', 'kernel_gate', 'verify_goal_tree']

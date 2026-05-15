@@ -1,0 +1,4 @@
+# file: D:\freedom-kernel-main\src\freedom_theory\extensions\__init__.py
+# hypothesis_version: 6.148.7
+
+[0.0, 0.5, 'ConflictQueue', 'EmergencyContext', 'EmergencyProtocol', 'IFCViolation', 'ProposedRule', 'SecurityLattice', 'SynthesisEngine']

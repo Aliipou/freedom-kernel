@@ -1,0 +1,183 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  rust-check:
+    name: Rust — clippy + tests
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: freedom-kernel
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@9bdad043e88c75890e36ad3bbc8d27f0090dd609
+        with:
+          workspaces: freedom-kernel
+
+      - name: TCB LOC guard — engine.rs must stay under 300 lines
+        run: |
+          loc=$(wc -l < src/engine.rs)
+          echo "engine.rs: ${loc} lines"
+          if [ "$loc" -gt 300 ]; then
+            echo "ERROR: engine.rs exceeds 300 LOC (TCB inflation). Current: ${loc}"
+            echo "If this is a legitimate TCB change, update the limit with justification."
+            exit 1
+          fi
+
+      - name: TCB API guard — engine.rs must export exactly one public function
+        run: |
+          pub_fns=$(grep -c '^pub fn ' src/engine.rs || true)
+          echo "engine.rs public functions: ${pub_fns}"
+          if [ "$pub_fns" -gt 1 ]; then
+            echo "ERROR: engine.rs has ${pub_fns} public functions (must be 1: verify)."
+            echo "New public API in engine.rs expands the TCB surface. Move to a separate module."
+            exit 1
+          fi
+
+      - name: TCB import guard — engine.rs may only import from capability and wire
+        run: |
+          bad_imports=$(grep '^use crate::' src/engine.rs | grep -v 'crate::capability\|crate::wire' || true)
+          if [ -n "$bad_imports" ]; then
+            echo "ERROR: engine.rs imports from outside capability/wire:"
+            echo "$bad_imports"
+            echo "TCB must not depend on modules outside its defined boundary."
+            exit 1
+          fi
+
+      - name: TCB purity check — no randomness/network/filesystem in engine.rs
+        run: |
+          if grep -E 'OsRng|rand_core|TcpStream|UdpSocket|File::open|fs::read|fs::write|std::net' src/engine.rs; then
+            echo "ERROR: engine.rs contains I/O or randomness (TCB violation)"
+            exit 1
+          fi
+
+      - name: TCB algebra guard — capability.rs must stay finite and self-contained
+        run: |
+          cap_loc=$(wc -l < src/capability.rs)
+          echo "capability.rs: ${cap_loc} lines"
+          if [ "$cap_loc" -gt 150 ]; then
+            echo "ERROR: capability.rs exceeds 150 LOC (hard ceiling). Capability algebra must stay finite."
+            echo "If you are adding a new CapabilityKind variant, that is fine — one line."
+            echo "If you need more than 150 LOC, you are adding policy logic. That belongs outside the TCB."
+            exit 1
+          fi
+          if grep -E '^use crate::' src/capability.rs; then
+            echo "ERROR: capability.rs imports from the project (use crate:: found)."
+            echo "capability.rs must be self-contained — zero project dependencies."
+            exit 1
+          fi
+          if grep -E '^pub struct |^struct ' src/capability.rs; then
+            echo "ERROR: capability.rs contains struct definitions."
+            echo "Only enums are permitted. Structs carry state and open extension points."
+            exit 1
+          fi
+
+      - name: Clippy — zero-panic policy
+        run: |
+          cargo clippy --all-targets -- \
+            -D warnings \
+            -D clippy::unwrap_used \
+            -D clippy::expect_used \
+            -D clippy::indexing_slicing \
+            -D clippy::panic
+
+      - name: Build (locked)
+        run: cargo build --release --locked
+
+  python-test:
+    name: Python — lint + tests
+    runs-on: ubuntu-24.04
+    needs: rust-check
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2f
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust kernel
+        working-directory: freedom-kernel
+        run: pip install .
+
+      - name: Install Python dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: ruff check src tests
+
+      - name: Type check (mypy)
+        run: mypy src --ignore-missing-imports
+
+      - name: Test with coverage gate
+        run: pytest --cov=freedom_theory --cov-report=term-missing --cov-fail-under=85
+
+  supply-chain:
+    name: Supply chain — cargo-deny + audit
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: freedom-kernel
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@34899fc7f6b6b25e2b60b96e53e1df213f5bbb6f
+        with:
+          manifest-path: freedom-kernel/Cargo.toml
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: cargo audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+
+  api-smoke:
+    name: API smoke test
+    runs-on: ubuntu-24.04
+    needs: python-test
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2f
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build and install
+        working-directory: freedom-kernel
+        run: pip install .
+
+      - run: pip install -e ".[dev]"
+
+      - name: Smoke test API
+        run: pytest tests/test_api.py -v

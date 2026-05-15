@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "freedom-theory-ai"
+version = "1.0.0"
+description = "Capability-security kernel for agent runtimes — typed authority verification with formal invariants"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [
+  { name = "Contributors" },
+]
+keywords = ["capability-security", "agent-runtimes", "formal-verification", "authority-verification", "rust", "formal-methods"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "fastapi>=0.111.0",
+  "uvicorn[standard]>=0.29.0",
+  "pydantic>=2.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "httpx>=0.27.0",
+  "ruff>=0.4.0",
+  "mypy>=1.10.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Aliipou/freedom-theory-ai"
+Repository = "https://github.com/Aliipou/freedom-theory-ai"
+Issues = "https://github.com/Aliipou/freedom-theory-ai/issues"
+
+[project.scripts]
+freedom-server = "freedom_theory.api.app:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/freedom_theory"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+src = ["src"]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+strict = false
+ignore_missing_imports = true

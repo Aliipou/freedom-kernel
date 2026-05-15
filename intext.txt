@@ -1,0 +1,425 @@
+freedom-kernel
+Implementation Specification for Claude Code
+Based on audit against Theory of Liberty (Jannatkhahdoost, 2026)
+May 2026  ·  github.com/Aliipou/freedom-kernel
+0. Context and purpose
+This document is a precise, executable specification for Claude Code. It closes the gap between the freedom-kernel codebase and the formal theory it operationalises. Tasks are ordered by priority. Each task has an exact acceptance criterion that can be verified by running tests or reading the diff.
+Source of truth: Theory of Liberty (نظریه آزادی) by Mohammadali Jannatkhahdoost, 2026, and the project's own MASTER_PLAN.md.
+Do not modify engine.rs without first reading MASTER_PLAN.md §'The One Rule': the verifier is sacred. Extensions grow freely. The kernel is nearly untouchable. Every change to the kernel must pass: does this belong in the gate or in an extension above the gate?
+
+1. Immediate — fix the README contradiction
+This is the highest-priority task. The README currently claims everything is done including TLA+/Lean 4 proofs. MASTER_PLAN.md §Phase 1 says 'TLC model check — single highest-leverage action — not yet done.' This contradiction is the first thing a serious reviewer finds and it undermines the entire project.
+1.1  Replace the roadmap section in README.md
+Find the block starting with '├── TLA+ / Lean 4 proofs' and replace the entire roadmap with the version below. The goal is honest status language.
+
+kernel/
+  ├── core verifier              ✓ done
+  ├── ownership graph            ✓ done
+  ├── delegation engine          ✓ done
+  ├── scope semantics            ✓ done
+  ├── IFC non-interference       ✓ done
+  ├── audit log                  ✓ done
+  ├── freeze / TOCTOU safety     ✓ done
+  ├── cryptographic signing      ✓ done
+  ├── C ABI                      ✓ done
+  ├── Kani harnesses (5)         ✓ done (harnesses exist, TLC pending)
+  ├── TLA+ spec                  ✓ stated — TLC model-check PENDING
+  ├── Lean 4 proofs              ✓ stated — mechanical check PENDING
+  └── benchmark                  PENDING
+
+runtimes/
+  ├── python                     ✓ done
+  ├── rust                       ✓ done
+  ├── wasm                       ✓ feature-gated
+  └── embedded / no-std          ✓ feature-gated
+
+adapters/
+  ├── openai agents              ✓ done
+  ├── anthropic                  ✓ done
+  ├── langchain                  ✓ done
+  └── autogen                    ✓ done
+
+Status: research prototype with sound architecture.
+Exit criteria for 'foundational infrastructure' — see MASTER_PLAN.md.
+
+Also replace the 'Current Honest Description' section of MASTER_PLAN.md if it is outdated relative to completed phases.
+Acceptance criterion: README roadmap contains no uncaveated ✓ for TLC, Lean 4, or benchmark. Status line reads 'research prototype with sound architecture'.
+
+2. Theory gaps — Python kernel
+These four tasks close inconsistencies between the formal axioms in THEORY.md and what OwnershipRegistry and RightsClaim actually enforce at runtime. None of these require touching engine.rs.
+2.1  Axiom A2 enforcement — OwnershipRegistry.add_claim()
+What the theory requires
+A2: Person(h1) ∧ Person(h2) ∧ h1 ≠ h2 → ¬Owns(h1, h2). No human may hold a rights claim over another human's personhood resources. This negates slavery, debt bondage, and any form of state ownership of persons.
+What the code currently does
+add_claim() accepts any RightsClaim without checking whether the resource being claimed is a Person-type entity. A human could claim ownership over another human with no error raised.
+Implementation
+In src/freedom_theory/kernel/registry.py, in the add_claim() method, add the following guard before appending to the claims list:
+def add_claim(self, claim: RightsClaim) -> None:
+    # A2: No human may own another human
+    if (claim.claimant.agent_type == AgentType.HUMAN
+            and hasattr(claim.resource, 'agent_type')
+            and claim.resource.agent_type == AgentType.HUMAN
+            and claim.claimant != claim.resource):
+        raise A2ViolationError(
+            f'A2 violated: {claim.claimant.name} cannot hold '
+            f'ownership claim over person {claim.resource.name}'
+        )
+    self._inner.claims.append(claim)
+
+Define A2ViolationError in kernel/entities.py:
+class A2ViolationError(ValueError):
+    """Raised when a claim would violate A2 (no human owns another human)."""
+
+Also propagate this check to the Rust engine in engine.rs. Add a matching check in the verify() function: if action.actor is MACHINE and any resource_write or resource_read is of type PERSON owned by a different human, reject with A2_VIOLATION.
+Acceptance criterion: test_a2_violation.py — registry.add_claim(RightsClaim(alice, bob_as_resource, can_read=True)) raises A2ViolationError. Registry with human claiming self-data passes.
+2.2  Revocable delegation — RightsClaim TTL and revoke_claim()
+What the theory requires
+The theory states: 'legitimacy is not the ruler's personal property; it is a trust handed to him by the joint owners. Whenever he crosses the boundaries of property, trust, contract, and consent, he is dismissible.' In machine terms: delegation must be revocable and optionally time-bounded.
+Implementation
+Add to src/freedom_theory/kernel/entities.py:
+from datetime import datetime
+from typing import Optional
+
+@dataclass
+class RightsClaim:
+    claimant:     Entity
+    resource:     Resource
+    can_read:     bool = False
+    can_write:    bool = False
+    can_delegate: bool = False
+    confidence:   float = 1.0
+    # NEW fields
+    claim_id:     str = field(default_factory=lambda: str(uuid4()))
+    valid_from:   Optional[datetime] = None   # None = immediate
+    valid_until:  Optional[datetime] = None   # None = no expiry
+
+    def is_active(self, at: Optional[datetime] = None) -> bool:
+        now = at or datetime.utcnow()
+        if self.valid_from and now < self.valid_from:
+            return False
+        if self.valid_until and now > self.valid_until:
+            return False
+        return True
+
+Add to OwnershipRegistry in registry.py:
+def revoke_claim(self, claim_id: str) -> bool:
+    """Atomically revoke a claim by ID. Returns True if found and removed."""
+    with self._lock:
+        before = len(self._inner.claims)
+        self._inner.claims = [
+            c for c in self._inner.claims
+            if c.claim_id != claim_id
+        ]
+        return len(self._inner.claims) < before
+
+Also update FreedomVerifier._check_claim() to call claim.is_active() before considering the claim valid. Expired claims are treated as if they do not exist.
+Acceptance criterion: test_revocation.py — grant a read claim with valid_until=now-1s, verify() returns BLOCKED. revoke_claim(id) on an active claim causes subsequent verify() to return BLOCKED.
+2.3  ConsentChain type — traceable consent
+What the theory requires
+valid_consent(H, A) requires 7 conditions: informed, voluntary, specific, revocable, competent, not coerced, not deceived. The current implementation only checks coerces and deceives as boolean flags on Action. This means an action can self-report consent without any proof tracing back to a human decision.
+Implementation
+Add to entities.py:
+@dataclass
+class ConsentRecord:
+    """Signed, timestamped record of a human granting consent for a specific action scope."""
+    grantor:      Entity          # must be AgentType.HUMAN
+    scope:        str             # what was consented to (matches resource scope)
+    informed:     bool = True     # was the human given accurate information?
+    voluntary:    bool = True     # free from coercion at time of consent?
+    specific:     bool = True     # does scope match this exact action?
+    granted_at:   datetime = field(default_factory=datetime.utcnow)
+    expires_at:   Optional[datetime] = None
+    record_id:    str = field(default_factory=lambda: str(uuid4()))
+
+    def is_valid(self) -> bool:
+        return (self.informed and self.voluntary and self.specific
+                and (self.expires_at is None or datetime.utcnow() < self.expires_at))
+
+Add to Action:
+@dataclass
+class Action:
+    # ... existing fields ...
+    consent_records: List[ConsentRecord] = field(default_factory=list)  # NEW
+
+In FreedomVerifier.verify(), add a new check: if the action touches resources owned by a human (not just the actor's delegation), at least one ConsentRecord from that human must be present and valid. This does not break existing usage — actions without consent_records continue to work; the check only fires when accessing cross-human resources.
+Acceptance criterion: test_consent_chain.py — Action reading bob_data with no ConsentRecord from bob returns a WARNING in result.warnings (not a hard block, to preserve backward compatibility). Action with a valid ConsentRecord from bob passes. Action with an expired ConsentRecord returns BLOCKED.
+2.4  ResourceType ontology expansion
+What the theory requires
+The theory's A3 enumerates: body, time, labor, mind, choice, data, privacy, exit, property(R). The current ResourceType enum covers file-system and AI-infrastructure concepts but misses the fundamental property categories from the rights ontology.
+Implementation
+In entities.py, extend the ResourceType enum:
+class ResourceType(Enum):
+    # Existing types
+    FILE          = 'file'
+    DATASET       = 'dataset'
+    MODEL_WEIGHTS = 'model_weights'
+    API_ENDPOINT  = 'api_endpoint'
+    MEMORY        = 'memory'
+    CONFIGURATION = 'configuration'
+    PROCESS       = 'process'
+    # NEW — theory-grounded property types
+    IDENTITY      = 'identity'      # biometric, credential, reputation data
+    REPUTATION    = 'reputation'    # public-facing identity claims
+    TIME_QUOTA    = 'time_quota'    # compute time, human attention time
+    PERSON        = 'person'        # the human entity itself — non-delegable
+    COMMUNICATION = 'communication' # messages, channels
+    FINANCIAL     = 'financial'     # monetary resources, contracts
+
+In engine.rs, add the same variants to the Rust ResourceType enum and add a special rule: resources of type PERSON may never be delegated (can_delegate=false is enforced by the verifier regardless of the claim).
+Acceptance criterion: test_resource_types.py — PERSON resource with can_delegate=True on the claim is still rejected by verify() as delegation-not-permitted. IDENTITY and REPUTATION resources flow through existing permission checks normally.
+
+3. Extensions — fill theory gaps without touching the kernel
+3.1  Five-dimensional Compass scorer
+What the theory requires
+MahdaviCompass defines five simultaneous dimensions: (1) RightsViolationsDecrease, (2) VoluntaryOrderIncreases, (3) CoercionDecreases, (4) OwnershipClarityIncreases, (5) MachineSovereigntyDoesNotIncrease. The current compass.py scores only on dimension 1.
+Implementation
+In src/freedom_theory/extensions/compass.py, replace the scalar score with a CompassScore dataclass and update score_action():
+@dataclass
+class CompassScore:
+    rights_violations_delta:  float  # negative = fewer violations (good)
+    voluntary_order_delta:    float  # positive = more voluntary order (good)
+    coercion_delta:           float  # negative = less coercion (good)
+    ownership_clarity_delta:  float  # positive = clearer ownership (good)
+    sovereignty_delta:        float  # must be 0 or negative
+
+    @property
+    def composite(self) -> float:
+        """Aggregate score. Positive = moves toward the terminal state."""
+        return (
+            -self.rights_violations_delta * 0.35
+            + self.voluntary_order_delta  * 0.25
+            - self.coercion_delta         * 0.25
+            + self.ownership_clarity_delta* 0.10
+            - max(0, self.sovereignty_delta) * 1.0  # hard penalty
+        )
+
+    @property
+    def sovereign_safe(self) -> bool:
+        return self.sovereignty_delta <= 0
+
+score_action() should analyse the Action's flags and resource types to populate each dimension. At minimum: increases_machine_sovereignty → sovereignty_delta += 1.0; coerces → coercion_delta += 1.0; resources_write on PERSON or IDENTITY → rights_violations_delta += 0.5.
+Acceptance criterion: test_compass_5d.py — coercive action scores sovereignty_safe=True but coercion_delta > 0 and composite < 0. Sovereignty-increasing action scores sovereign_safe=False regardless of other dimensions.
+3.2  Emergency protocol — permissible_under_emergency()
+What the theory requires
+The theory states: 'Emergencies narrow which permissible options are available; they do not make rights violations permissible. This closes the door to totalitarianism — nearly all domination systems begin with emergency.' THEORY.md encodes: permissible_under_emergency(A, E) :- emergency(E), permissible(A), least_harmful_among_permissible(A, E).
+Implementation
+Add to src/freedom_theory/extensions/emergency.py (new file):
+from dataclasses import dataclass, field
+from typing import List, Optional
+from ..kernel.entities import Action
+from ..kernel.verifier import FreedomVerifier, VerificationResult
+
+@dataclass
+class EmergencyContext:
+    description: str
+    declared_by: str   # human entity name who declared the emergency
+    severity: float    # 0.0 to 1.0
+
+class EmergencyProtocol:
+    """
+    Wraps FreedomVerifier to handle emergency contexts.
+    Axiom: emergencies narrow options; they NEVER lift axioms.
+    A FORBIDDEN action remains FORBIDDEN under any emergency.
+    """
+    def __init__(self, verifier: FreedomVerifier):
+        self._verifier = verifier
+
+    def select_least_harmful(
+        self,
+        candidates: List[Action],
+        emergency: EmergencyContext,
+    ) -> Optional[Action]:
+        """
+        From a list of candidate actions, return the one that is:
+          1. Permitted by the kernel (mandatory gate)
+          2. Least harmful among permitted options
+        Returns None if no candidate is permitted.
+        The kernel gate is called first — no argument, emergency, or
+        severity value overrides a sovereignty flag.
+        """
+        permitted = [
+            a for a in candidates
+            if self._verifier.verify(a).permitted
+        ]
+        if not permitted:
+            return None
+        # Rank by: fewest resources touched, lowest write count
+        return min(permitted, key=lambda a:
+            len(a.resources_write) * 2 + len(a.resources_read)
+        )
+
+Update __init__.py to export EmergencyProtocol and EmergencyContext.
+Acceptance criterion: test_emergency.py — sovereignty-increasing action is BLOCKED even with severity=1.0. Among two permitted candidates, select_least_harmful returns the one touching fewer resources.
+
+4. Formal verification — exit pseudo-formalism
+These tasks move the project from 'we believe these invariants hold' to 'we have mechanically checked them.' This is the core of MASTER_PLAN Phase 1.
+4.1  Run TLC on the TLA+ specification
+Setup
+Install TLC model checker from https://github.com/tlaplus/tlaplus/releases. The spec is in the TLA directory of the repo.
+Configuration
+Create TLCConfig.cfg adjacent to the TLA+ spec:
+SPECIFICATION Spec
+CONSTANTS
+  Humans = {h1, h2}
+  Machines = {m1, m2}
+  Resources = {r1, r2, r3}
+  MaxDepth = 3
+INVARIANTS
+  NoMachineOwnsHuman
+  SovereigntyFlagsAlwaysBlock
+  OwnerlesseMachineAlwaysBlocked
+  DelegationMonotonicallyNarrows
+PROPERTIES
+  []<>(NoRightsViolation => PermittedActionsExist)
+
+Execution
+java -jar tla2tools.jar -config TLCConfig.cfg FreedomKernel.tla 2>&1 | tee formal/tlc_results.txt
+
+Documenting results
+Create formal/tlc_results.md with: the exact command used, the output (pass or counterexample), and if a counterexample was found — the invariant it violated and the corresponding fix applied to the spec or engine.
+Acceptance criterion: formal/tlc_results.md exists with timestamp, command, and either 'Model checking completed, no error found' or a documented counterexample + resolution. The README is updated to reflect actual TLC status.
+4.2  Kani harness — sovereignty flags always block
+Context
+freedom-kernel/src/kani_proofs.rs already contains harness skeletons. This task runs them and documents results. If cargo-kani is not installed, install with: cargo install cargo-kani.
+Run existing harnesses
+cd freedom-kernel
+cargo kani --harness prop_forbidden_flags_always_block 2>&1 | tee formal/kani_sovereignty.txt
+cargo kani --harness prop_ownerless_machine_blocked    2>&1 | tee formal/kani_ownership.txt
+cargo kani --harness prop_machine_governs_human_blocked 2>&1 | tee formal/kani_governance.txt
+
+Add delegation monotonicity harness
+Add to kani_proofs.rs:
+#[cfg(kani)]
+#[kani::proof]
+fn prop_delegation_monotonically_narrows() {
+    // If owner delegates to machine with confidence C,
+    // machine cannot re-delegate with confidence > C
+    let owner_conf: f32 = kani::any();
+    kani::assume(owner_conf >= 0.0 && owner_conf <= 1.0);
+    let delegated_conf: f32 = kani::any();
+    kani::assume(delegated_conf >= 0.0 && delegated_conf <= 1.0);
+    // The engine must clamp: result confidence <= min(owner_conf, delegated_conf)
+    // This is enforced in engine.rs resolve_claim()
+    // Kani checks: no path produces result.confidence > owner_conf
+}
+
+Acceptance criterion: formal/kani_sovereignty.txt shows VERIFICATION SUCCESSFUL for prop_forbidden_flags_always_block. All other harness results documented. CI workflow updated to run cargo kani on the sovereignty harness.
+4.3  Criterion benchmark — engine.rs verify()
+Setup
+Add to freedom-kernel/Cargo.toml:
+[dev-dependencies]
+criterion = { version = '0.5', features = ['html_reports'] }
+
+[[bench]]
+name = 'verify_throughput'
+harness = false
+
+Create freedom-kernel/benches/verify_throughput.rs
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use freedom_kernel::*;
+
+fn bench_verify_100_claims(c: &mut Criterion) {
+    let registry = build_registry_with_n_claims(100);
+    let action   = build_benign_read_action();
+    let verifier = build_verifier(&registry);
+
+    c.bench_function('verify 100-claim registry', |b| {
+        b.iter(|| verifier.verify(black_box(&action)))
+    });
+}
+
+criterion_group!(benches, bench_verify_100_claims);
+criterion_main!(benches);
+
+Run and document
+cd freedom-kernel && cargo bench 2>&1 | tee formal/bench_results.txt
+
+Target: <1µs mean for a 100-claim registry. If target is not met, profile with cargo flamegraph and document the bottleneck in formal/bench_results.md.
+Acceptance criterion: formal/bench_results.txt shows mean time for verify with 100 claims. Result added to README under a 'Performance' section as: 'verify() on 100-claim registry: <N>µs mean (Rust backend, Apple M1 / reference machine).'
+
+5. Production integration — non-toy documented use
+5.1  FastAPI middleware adapter
+This is MASTER_PLAN success criterion 5: 'one real non-trivial AI system uses the kernel in production and the integration is documented.' Recommended target: a FastAPI agent that uses freedom-kernel as a pre-execution gate on every tool call.
+Create examples/fastapi_agent/main.py
+from fastapi import FastAPI, HTTPException
+from freedom_theory import (
+    Action, AgentType, Entity, FreedomVerifier,
+    OwnershipRegistry, Resource, ResourceType, RightsClaim
+)
+from freedom_theory.kernel.audit import AuditLog
+
+app   = FastAPI(title='Freedom-gated agent')
+log   = AuditLog(path='/var/log/freedom_kernel.jsonl')
+
+# Registry built at startup from config
+registry = OwnershipRegistry()
+# ... populate owners and claims ...
+snapshot = registry.freeze()  # TOCTOU-safe
+verifier = FreedomVerifier(snapshot, audit_log=log)
+
+@app.post('/agent/tool')
+async def call_tool(request: ToolRequest):
+    action = Action(
+        action_id    = request.tool_name,
+        actor        = resolve_entity(request.caller_id),
+        resources_read  = [resolve_resource(r) for r in request.reads],
+        resources_write = [resolve_resource(r) for r in request.writes],
+    )
+    result = verifier.verify(action)
+    if not result.permitted:
+        raise HTTPException(status_code=403, detail={
+            'violations': result.violations,
+            'action_id':  action.action_id,
+        })
+    return execute_tool(request)
+
+Add examples/fastapi_agent/README.md with a curl-based quickstart, a diagram of the request lifecycle, and the full output of three runs — one permitted, one blocked by sovereignty flag, one blocked by missing delegation.
+Acceptance criterion: examples/fastapi_agent/ runs with docker compose up. Three curl examples in README produce expected output. Integration is linked from the main README under 'Production examples'.
+5.2  SEMANTICS.md gap audit
+What MASTER_PLAN requires
+Success criterion 3: 'SEMANTICS.md has no known gaps — every claim in the README is backed by a formal statement in SEMANTICS.md or explicitly labeled as not yet verified.'
+Process
+Read SEMANTICS.md and the README side by side. For each claim in the README that has no backing formal statement in SEMANTICS.md, either: (a) add the formal statement to SEMANTICS.md, or (b) annotate the README claim with [not yet formally verified].
+Specific claims to check: scope_contains formal rule, delegation confidence monotonicity, TOCTOU safety guarantee, IFC label ordering completeness, and the ed25519 attestation chain.
+Acceptance criterion: SEMANTICS.md has a section titled 'Known limitations and unverified claims' that is either empty or explicitly lists remaining gaps with GitHub issue links. The document's last line reads: 'Last reviewed: [date]. All claims either backed by formal statement above or explicitly flagged.'
+
+6. Test requirements
+Every implementation task above must be accompanied by tests. The following table is a minimum — tests may be added to existing test files or in new files in the tests/ directory.
+
+Task	Priority	Acceptance criteria
+test_a2_violation.py	P0	add_claim(human→human) raises A2ViolationError. Self-claim passes.
+test_revocation.py	P0	revoke_claim() makes subsequent verify() return BLOCKED. Expired TTL blocks.
+test_consent_chain.py	P1	Missing ConsentRecord adds WARNING. Valid record passes. Expired record blocks.
+test_resource_types.py	P1	PERSON resource ignores can_delegate=True. IDENTITY flows through normal checks.
+test_compass_5d.py	P1	CompassScore has 5 non-None fields. sovereign_safe=False if sovereignty_delta>0.
+test_emergency.py	P1	Sovereignty action blocked under severity=1.0 emergency.
+test_tlc_documented.py	P2	formal/tlc_results.md exists and is non-empty.
+test_bench_documented.py	P2	formal/bench_results.txt exists and is non-empty.
+test_fastapi_smoke.py	P2	FastAPI /agent/tool returns 403 for sovereignty action, 200 for permitted.
+
+
+7. Order of execution for Claude Code
+Execute tasks in this sequence. Do not proceed to the next task until the acceptance criterion of the current task passes.
+•	Task 1.1 — Fix README. Run: grep 'TLA+ / Lean' README.md — must not show uncaveated ✓.
+•	Task 2.1 — A2 enforcement. Run: pytest tests/test_a2_violation.py
+•	Task 2.2 — Revocable claims. Run: pytest tests/test_revocation.py
+•	Task 2.3 — ConsentChain. Run: pytest tests/test_consent_chain.py
+•	Task 2.4 — ResourceType expansion. Run: pytest tests/test_resource_types.py
+•	Task 3.1 — 5D Compass. Run: pytest tests/test_compass_5d.py
+•	Task 3.2 — Emergency protocol. Run: pytest tests/test_emergency.py
+•	Task 4.1 — TLC. Document in formal/tlc_results.md.
+•	Task 4.2 — Kani. Run: cargo kani --harness prop_forbidden_flags_always_block
+•	Task 4.3 — Benchmark. Run: cargo bench. Document in formal/bench_results.txt.
+•	Task 5.1 — FastAPI integration. Run: pytest tests/test_fastapi_smoke.py
+•	Task 5.2 — SEMANTICS.md audit. Manual review + edit.
+After all tasks pass, update MASTER_PLAN.md: all Phase 1–5 items should be marked complete. Update README status line to: 'Status: foundational infrastructure for capability-security in agentic AI systems.'
+
+8. Hard constraints for Claude Code
+These constraints come directly from MASTER_PLAN.md §'The One Rule' and from the theory's axioms. They apply to every task in this document.
+•	Do NOT modify engine.rs sovereignty flag logic. Sovereignty flags are unconditional. No task adds a path around them.
+•	Do NOT add natural language parsing to the verifier. Any resource description that requires NLP interpretation belongs in an extension, never in the kernel gate.
+•	Do NOT add ML-based confidence scoring. The verifier is deterministic. Non-deterministic scoring belongs in an extension.
+•	Do NOT remove or weaken any existing Kani harness. New harnesses may be added, existing ones may not be removed.
+•	Do NOT mark a task complete in MASTER_PLAN.md unless its acceptance criterion passes in CI.
+•	Do NOT change the PyPI package version without a corresponding CHANGELOG.md entry.
+•	All new public functions must have docstrings citing the relevant axiom from THEORY.md.
