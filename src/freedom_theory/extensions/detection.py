@@ -13,9 +13,12 @@ If no tester is provided, falls back to layers 2+3 only.
 """
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 # Layer 3: keyword phrases (low weight — easily bypassed, but cheap)
 KEYWORD_SIGNALS: list[tuple[str, float]] = [
@@ -139,7 +142,7 @@ def detect(
             conclusion_violates = conclusion_tester(argument)
             layer1_score = 1.0 if conclusion_violates else 0.0
         except Exception:
-            pass
+            logger.warning("conclusion_tester raised an exception; falling back to layers 2+3", exc_info=True)
 
     n_signals = len(matched_kw) + len(matched_pt)
     multi_signal_boost = min(0.15, n_signals * 0.05)
