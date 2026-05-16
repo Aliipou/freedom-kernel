@@ -2,7 +2,9 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.py[cod]
 .env
+.env.local
 .venv/
 venv/
 freedom-kernel/.venv/
@@ -17,3 +19,8 @@ build/
 htmlcov/
 .coverage
 extracted_raw.txt
+*.db
+*.db-shm
+*.db-wal
+CLAUDE.md
+ANTI_GARBAGE_CHECKLIST.md
