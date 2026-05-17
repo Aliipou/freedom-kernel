@@ -5,7 +5,7 @@
 //! `max_delegation_depth` is hard-capped at 16 to prevent recursive spawning attacks.
 
 use crate::engine;
-use crate::wire::{ActionWire, EntityWire, OwnershipRegistryWire, ResourceWire, VerificationResultWire};
+use crate::wire::{ActionWire, EntityKind, EntityWire, OwnershipRegistryWire, ResourceWire, VerificationResultWire};
 
 const MAX_DELEGATION_DEPTH: u8 = 16;
 
@@ -125,7 +125,7 @@ pub fn verify_spawn(
     registry: &OwnershipRegistryWire,
     req: &AgentSpawnRequest,
 ) -> Result<SpawnResult, SpawnError> {
-    if req.parent.kind != "MACHINE" {
+    if req.parent.kind != EntityKind::Machine {
         return Err(SpawnError::ParentNotMachine);
     }
 
@@ -155,10 +155,10 @@ mod tests {
     use crate::wire::{ClaimWire, MachineOwnerWire};
 
     fn machine(name: &str) -> EntityWire {
-        EntityWire { name: name.to_string(), kind: "MACHINE".to_string() }
+        EntityWire { name: name.to_string(), kind: EntityKind::Machine }
     }
     fn human(name: &str) -> EntityWire {
-        EntityWire { name: name.to_string(), kind: "HUMAN".to_string() }
+        EntityWire { name: name.to_string(), kind: EntityKind::Human }
     }
     fn owned_registry_with_ctx_claim(agent_name: &str, child_id: &str) -> OwnershipRegistryWire {
         let ctx = ResourceWire {
