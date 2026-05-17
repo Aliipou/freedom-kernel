@@ -199,5 +199,8 @@ pub fn verify(registry: &OwnershipRegistryWire, action: &ActionWire) -> Verifica
         manipulation_score: 0.0,
         signature: None,
         signing_key: None,
+        key_id: None,
+        nonce: None,
+        timestamp: None,
     }
 }
