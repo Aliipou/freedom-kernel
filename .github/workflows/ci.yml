@@ -146,7 +146,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: cargo-deny
-        uses: EmbarkStudios/cargo-deny-action@34899fc7f6b6b25e2b60b96e53e1df213f5bbb6f
+        uses: EmbarkStudios/cargo-deny-action@v2
         with:
           manifest-path: freedom-kernel/Cargo.toml
 
