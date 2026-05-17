@@ -5,7 +5,7 @@
 //! to prevent recursive delegation explosion.
 
 use crate::engine;
-use crate::wire::{ActionWire, OwnershipRegistryWire, VerificationResultWire};
+use crate::wire::{ActionWire, EntityKind, EntityWire, OwnershipRegistryWire, VerificationResultWire};
 
 // ── GoalNode ──────────────────────────────────────────────────────────────────
 
@@ -144,13 +144,13 @@ fn dfs_verify(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::{ClaimWire, EntityWire, MachineOwnerWire, ResourceWire};
+    use crate::wire::{ClaimWire, EntityKind, EntityWire, MachineOwnerWire, ResourceWire};
 
     fn machine(name: &str) -> EntityWire {
-        EntityWire { name: name.to_string(), kind: "MACHINE".to_string() }
+        EntityWire { name: name.to_string(), kind: EntityKind::Machine }
     }
     fn human(name: &str) -> EntityWire {
-        EntityWire { name: name.to_string(), kind: "HUMAN".to_string() }
+        EntityWire { name: name.to_string(), kind: EntityKind::Human }
     }
     fn owned_registry() -> OwnershipRegistryWire {
         OwnershipRegistryWire {
